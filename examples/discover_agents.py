@@ -3,12 +3,12 @@
 import asyncio
 from hybro_sdk import HybroGateway
 
-API_KEY = "hba_your_api_key_here"
+API_KEY = "hybro_YETntgHIYpLrmHeOzWuJjt56UB9nlC_a"
 
 
 async def main():
-    async with HybroGateway(api_key=API_KEY) as gw:
-        agents = await gw.discover("legal contract review", limit=5)
+    async with HybroGateway(api_key=API_KEY, base_url="http://localhost:8000/api/v1") as gw:
+        agents = await gw.discover("Legal contract review", limit=5)
         for agent in agents:
             print(f"[{agent.match_score:.2f}] {agent.agent_id}: {agent.agent_card.get('name')}")
             print(f"  URL: {agent.agent_card.get('url')}")

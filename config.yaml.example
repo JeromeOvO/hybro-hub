@@ -1,0 +1,43 @@
+# Hybro Hub Configuration
+# Copy to ~/.hybro/config.yaml and adjust values.
+
+# Cloud connection
+cloud:
+  api_key: "hba_..."                    # Your Hybro API key (or set HYBRO_API_KEY env var)
+  gateway_url: "https://api.hybro.ai"   # Cloud gateway URL
+
+# Local agent discovery
+agents:
+  auto_discover: true                   # Enumerate listening localhost ports and probe for A2A agents
+
+  # Ports to skip during auto-discovery (databases, SSH, etc.)
+  # Default excludes: 22, 53, 80, 443, 3306, 5432, 6379, 27017
+  # auto_discover_exclude_ports:
+  #   - 22
+  #   - 3306
+
+  # Manually-configured agents (always registered, even if auto-discover is off)
+  local:
+    - name: "My Custom Agent"
+      url: "http://localhost:9001"
+    # - name: "Another Agent"
+    #   url: "http://localhost:9002"
+
+# Privacy settings (Phase 2b: logging only, does not block dispatch)
+privacy:
+  default_routing: "local_first"
+
+  # Extra keywords that trigger HIGH sensitivity classification
+  sensitive_keywords:
+    - "medical"
+    - "financial"
+    - "confidential"
+
+  # Extra regex patterns for sensitive data detection
+  # Built-in patterns already detect: email, phone, SSN, credit card, API keys
+  sensitive_patterns:
+    - "PROJ-\\d{4}"
+    # - "INTERNAL-\\w+"
+
+# Heartbeat interval (seconds)
+heartbeat_interval: 30
