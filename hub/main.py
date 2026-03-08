@@ -46,8 +46,11 @@ class HubDaemon:
     async def run(self) -> None:
         """Main entry point — run the hub daemon."""
         loop = asyncio.get_running_loop()
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, self._signal_shutdown)
+        try:
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.add_signal_handler(sig, self._signal_shutdown)
+        except NotImplementedError:
+            signal.signal(signal.SIGINT, lambda *_: self._signal_shutdown())
 
         try:
             await self._startup()

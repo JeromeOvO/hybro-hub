@@ -73,6 +73,7 @@ class Dispatcher:
         """
         events: list[dict] = []
         accumulated_text = ""
+        artifact_text = ""
 
         # Emit task_submitted
         events.append(DispatchEvent(
@@ -83,8 +84,10 @@ class Dispatcher:
 
         try:
             if agent.agent_card.get("capabilities", {}).get("streaming"):
-                async for chunk in self._dispatch_streaming(agent, message_dict):
+                async for chunk, is_artifact in self._dispatch_streaming(agent, message_dict):
                     accumulated_text += chunk
+                    if is_artifact:
+                        artifact_text += chunk
                     events.append(DispatchEvent(
                         type="agent_token",
                         agent_message_id=agent_message_id,
@@ -92,16 +95,22 @@ class Dispatcher:
                     ).to_publish_dict())
             else:
                 accumulated_text = await self._dispatch_sync(agent, message_dict)
+                artifact_text = accumulated_text
 
         except Exception as exc:
             logger.error("Dispatch to %s failed: %s", agent.name, exc)
             accumulated_text = f"Error dispatching to agent: {exc}"
+            artifact_text = accumulated_text
+
+        # Emit agent_response — prefer artifact content over concatenated
+        # status+artifact text so the persisted response is the terminal output.
+        response_text = artifact_text or accumulated_text
 
         # Emit agent_response
         events.append(DispatchEvent(
             type="agent_response",
             agent_message_id=agent_message_id,
-            data={"content": accumulated_text},
+            data={"content": response_text},
         ).to_publish_dict())
 
         # Emit processing_status
@@ -136,8 +145,8 @@ class Dispatcher:
 
     async def _dispatch_streaming(
         self, agent: LocalAgent, message_dict: dict
-    ) -> AsyncIterator[str]:
-        """Send a streaming A2A message/stream request, yield text chunks."""
+    ) -> AsyncIterator[tuple[str, bool]]:
+        """Send a streaming A2A message/stream request, yield (text, is_artifact) chunks."""
         request_body = self._build_jsonrpc(message_dict, method="message/stream")
         client = await self._get_client()
 
@@ -151,9 +160,9 @@ class Dispatcher:
                     data = json.loads(sse.data)
                 except (json.JSONDecodeError, TypeError):
                     continue
-                text = self._extract_chunk_text(data)
+                text, is_artifact = self._extract_chunk_text(data)
                 if text:
-                    yield text
+                    yield text, is_artifact
 
     # ──── JSON-RPC construction ────
     # TODO(a2a-v1.0): method names change in v1.0
@@ -210,11 +219,14 @@ class Dispatcher:
         return str(inner)
 
     @staticmethod
-    def _extract_chunk_text(data: dict) -> str:
+    def _extract_chunk_text(data: dict) -> tuple[str, bool]:
         """Extract text from an SSE streaming event.
 
         Each SSE event may be a full JSON-RPC response with the actual
         event nested under ``result``, or a raw event dict. Handle both.
+
+        Returns (text, is_artifact) so callers can distinguish artifact
+        content from status/progress messages.
         """
         inner = data.get("result", data)
 
@@ -223,7 +235,7 @@ class Dispatcher:
             for p in inner["artifact"].get("parts", []):
                 root = p.get("root", p)
                 if "text" in root:
-                    return root["text"]
+                    return root["text"], True
 
         # TaskStatusUpdateEvent with message
         if "status" in inner:
@@ -231,6 +243,6 @@ class Dispatcher:
             for p in msg.get("parts", []):
                 root = p.get("root", p)
                 if "text" in root:
-                    return root["text"]
+                    return root["text"], False
 
-        return ""
+        return "", False

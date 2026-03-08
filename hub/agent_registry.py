@@ -8,9 +8,10 @@ well-known A2A agent card paths).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from dataclasses import dataclass, field
-from uuid import uuid4
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 from a2a.utils.constants import (
@@ -31,6 +32,16 @@ DISCOVERY_TIMEOUT = 3
 _LOCALHOST_ADDRS = frozenset({"127.0.0.1", "::1", "0.0.0.0", "::", ""})
 
 _CONCURRENCY_LIMIT = 30
+
+
+def _normalize_url(url: str) -> str:
+    """Canonicalize localhost aliases so the same agent always maps to one URL."""
+    parsed = urlparse(url)
+    hostname = parsed.hostname or ""
+    if hostname in _LOCALHOST_ADDRS:
+        netloc = f"localhost:{parsed.port}" if parsed.port else "localhost"
+        parsed = parsed._replace(netloc=netloc)
+    return urlunparse(parsed)
 
 
 @dataclass
@@ -108,7 +119,7 @@ class AgentRegistry:
         self, url: str, name: str | None = None, source: str = "config"
     ) -> LocalAgent | None:
         """Try to fetch an agent card from a URL and register it."""
-        url = url.rstrip("/")
+        url = _normalize_url(url.rstrip("/"))
         card = await self._fetch_agent_card(url, source)
         if card is None:
             return None
@@ -123,7 +134,7 @@ class AgentRegistry:
             existing.name = agent_name
             return existing
 
-        local_id = uuid4().hex[:12]
+        local_id = hashlib.sha256(url.encode()).hexdigest()[:12]
         agent = LocalAgent(
             local_agent_id=local_id,
             name=agent_name,

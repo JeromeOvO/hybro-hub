@@ -145,7 +145,7 @@ class TestExtractText:
 class TestExtractChunkText:
     def test_artifact_chunk_raw(self):
         data = {"artifact": {"parts": [{"text": "chunk"}]}}
-        assert Dispatcher._extract_chunk_text(data) == "chunk"
+        assert Dispatcher._extract_chunk_text(data) == ("chunk", True)
 
     def test_artifact_chunk_jsonrpc_wrapped(self):
         data = {
@@ -153,11 +153,11 @@ class TestExtractChunkText:
             "id": "req-1",
             "result": {"artifact": {"parts": [{"text": "wrapped chunk"}]}},
         }
-        assert Dispatcher._extract_chunk_text(data) == "wrapped chunk"
+        assert Dispatcher._extract_chunk_text(data) == ("wrapped chunk", True)
 
     def test_status_chunk_raw(self):
         data = {"status": {"message": {"parts": [{"text": "done"}]}}}
-        assert Dispatcher._extract_chunk_text(data) == "done"
+        assert Dispatcher._extract_chunk_text(data) == ("done", False)
 
     def test_status_chunk_jsonrpc_wrapped(self):
         data = {
@@ -167,7 +167,7 @@ class TestExtractChunkText:
                 "status": {"message": {"parts": [{"text": "done wrapped"}]}},
             },
         }
-        assert Dispatcher._extract_chunk_text(data) == "done wrapped"
+        assert Dispatcher._extract_chunk_text(data) == ("done wrapped", False)
 
     def test_status_chunk_with_root_wrapper(self):
         data = {
@@ -175,7 +175,7 @@ class TestExtractChunkText:
                 "status": {"message": {"parts": [{"root": {"text": "nested"}}]}},
             },
         }
-        assert Dispatcher._extract_chunk_text(data) == "nested"
+        assert Dispatcher._extract_chunk_text(data) == ("nested", False)
 
     def test_empty_chunk(self):
-        assert Dispatcher._extract_chunk_text({}) == ""
+        assert Dispatcher._extract_chunk_text({}) == ("", False)

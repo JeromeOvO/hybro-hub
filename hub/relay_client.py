@@ -181,7 +181,15 @@ class RelayClient:
                     )
                     return
             except Exception:
-                logger.exception("Retry publish failed for room %s — dropping", room_id)
+                logger.exception(
+                    "Retry publish failed for room %s — re-queued %d publishes",
+                    room_id,
+                    len(pending) - i,
+                )
+                self._retry_queue.append((room_id, events))
+                for item in pending[i + 1:]:
+                    self._retry_queue.append(item)
+                return
 
     # ──── SSE subscription ────
 
