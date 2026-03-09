@@ -60,10 +60,13 @@ class LocalAgent:
 class AgentRegistry:
     """Registry of local A2A agents."""
 
+    HEALTH_FAILURE_THRESHOLD = 3
+
     def __init__(self, config: HubConfig) -> None:
         self._config = config
         self._agents: dict[str, LocalAgent] = {}
         self._client: httpx.AsyncClient | None = None
+        self._failure_counts: dict[str, int] = {}
 
     @property
     def agents(self) -> dict[str, LocalAgent]:
@@ -151,14 +154,37 @@ class AgentRegistry:
     # ──── Health check ────
 
     async def health_check(self) -> None:
-        """Ping all registered agents and update health status."""
+        """Ping all registered agents and update health status.
+
+        After ``HEALTH_FAILURE_THRESHOLD`` consecutive failures an agent is
+        removed from the registry so the next sync will cause the backend to
+        mark it inactive.
+        """
         for agent in list(self._agents.values()):
             card = await self._fetch_agent_card(agent.url)
-            agent.healthy = card is not None
             if card is not None:
+                agent.healthy = True
                 agent.agent_card = card
+                self._failure_counts.pop(agent.local_agent_id, None)
             else:
-                logger.debug("Agent %s unhealthy", agent.name)
+                agent.healthy = False
+                count = self._failure_counts.get(agent.local_agent_id, 0) + 1
+                self._failure_counts[agent.local_agent_id] = count
+                if count >= self.HEALTH_FAILURE_THRESHOLD:
+                    logger.warning(
+                        "Agent %s failed %d consecutive health checks — removing",
+                        agent.name,
+                        count,
+                    )
+                    del self._agents[agent.local_agent_id]
+                    self._failure_counts.pop(agent.local_agent_id, None)
+                else:
+                    logger.debug(
+                        "Agent %s unhealthy (%d/%d)",
+                        agent.name,
+                        count,
+                        self.HEALTH_FAILURE_THRESHOLD,
+                    )
 
     # ──── Agent card fetch ────
 
@@ -180,6 +206,14 @@ class AgentRegistry:
 
     def get_agent(self, local_agent_id: str) -> LocalAgent | None:
         return self._agents.get(local_agent_id)
+
+    def remove_agent(self, local_agent_id: str) -> bool:
+        """Remove an agent from the registry. Returns True if it was present."""
+        self._failure_counts.pop(local_agent_id, None)
+        if local_agent_id in self._agents:
+            del self._agents[local_agent_id]
+            return True
+        return False
 
     def get_healthy_agents(self) -> list[LocalAgent]:
         return [a for a in self._agents.values() if a.healthy]

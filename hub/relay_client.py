@@ -193,6 +193,17 @@ class RelayClient:
                     self._retry_queue.append(item)
                 return
 
+    # ──── Heartbeat ────
+
+    async def heartbeat(self) -> None:
+        """POST /api/v1/relay/hub/{hub_id}/heartbeat — liveness signal."""
+        client = await self._get_http_client()
+        resp = await client.post(
+            f"{self._base}/api/v1/relay/hub/{self._hub_id}/heartbeat",
+            headers={"X-API-Key": self._api_key},
+        )
+        resp.raise_for_status()
+
     # ──── SSE subscription ────
 
     async def subscribe(self) -> AsyncIterator[dict[str, Any]]:
@@ -240,6 +251,7 @@ class RelayClient:
                     self._connection_token = data.get("connection_token")
                     logger.info("Received connection token")
                     await self._flush_retry_queue()
+                    yield {"type": "_connected"}
                     continue
 
                 if event_type == "heartbeat":

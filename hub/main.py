@@ -22,6 +22,15 @@ logger = logging.getLogger(__name__)
 
 HEALTH_CHECK_INTERVAL = 60
 RESYNC_INTERVAL = 120
+HEARTBEAT_INTERVAL = 30
+
+CONNECTION_ERROR_TYPES = frozenset({
+    "ConnectError",
+    "ConnectTimeout",
+    "ConnectionRefusedError",
+    "ConnectionResetError",
+    "ConnectionAbortedError",
+})
 
 
 class HubDaemon:
@@ -92,11 +101,16 @@ class HubDaemon:
         # Start background tasks
         health_task = asyncio.create_task(self._health_check_loop())
         resync_task = asyncio.create_task(self._resync_loop())
+        heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
         try:
             async for event in self.relay.subscribe():
                 if self._shutdown_event.is_set():
                     break
+                if event.get("type") == "_connected":
+                    self._last_sync_payload = None
+                    await self._sync_agents()
+                    continue
                 try:
                     await self._handle_event(event)
                 except Exception:
@@ -104,7 +118,11 @@ class HubDaemon:
         finally:
             health_task.cancel()
             resync_task.cancel()
-            await asyncio.gather(health_task, resync_task, return_exceptions=True)
+            heartbeat_task.cancel()
+            await asyncio.gather(
+                health_task, resync_task, heartbeat_task,
+                return_exceptions=True,
+            )
 
     async def _handle_event(self, event: dict[str, Any]) -> None:
         """Handle a relay event based on its type."""
@@ -165,6 +183,7 @@ class HubDaemon:
             "data": {"task_id": uuid4().hex, "agent_name": agent.name},
         }])
 
+        dispatch_error_type: str | None = None
         async for batch in self.dispatcher.dispatch(
             agent=agent,
             message_dict=message_dict,
@@ -172,6 +191,19 @@ class HubDaemon:
             user_message_id=user_message_id,
         ):
             await self.relay.publish(room_id, batch)
+            for ev in batch:
+                if ev.get("type") == "agent_error":
+                    dispatch_error_type = ev.get("data", {}).get("error_type")
+
+        if dispatch_error_type and dispatch_error_type in CONNECTION_ERROR_TYPES:
+            agent_name = agent.name
+            if self.registry.remove_agent(local_agent_id):
+                logger.warning(
+                    "Dispatch to %s failed with %s — removed from registry, syncing",
+                    agent_name, dispatch_error_type,
+                )
+                self._last_sync_payload = None
+                await self._sync_agents()
 
     async def _handle_cancel_task(self, event: dict[str, Any]) -> None:
         """Best-effort cancellation of an in-flight task on a local agent."""
@@ -265,12 +297,26 @@ class HubDaemon:
             "data": {"task_id": uuid4().hex, "agent_name": agent.name},
         }])
 
+        dispatch_error_type: str | None = None
         async for batch in self.dispatcher.dispatch(
             agent=agent,
             message_dict=reply_message,
             agent_message_id=agent_message_id,
         ):
             await self.relay.publish(room_id, batch)
+            for ev in batch:
+                if ev.get("type") == "agent_error":
+                    dispatch_error_type = ev.get("data", {}).get("error_type")
+
+        if dispatch_error_type and dispatch_error_type in CONNECTION_ERROR_TYPES:
+            agent_name = agent.name
+            if self.registry.remove_agent(local_agent_id):
+                logger.warning(
+                    "HITL dispatch to %s failed with %s — removed from registry, syncing",
+                    agent_name, dispatch_error_type,
+                )
+                self._last_sync_payload = None
+                await self._sync_agents()
 
     # ──── Failure publishing ────
 
@@ -302,7 +348,12 @@ class HubDaemon:
         while not self._shutdown_event.is_set():
             await asyncio.sleep(HEALTH_CHECK_INTERVAL)
             try:
+                prev_count = len(self.registry.agents)
                 await self.registry.health_check()
+                if len(self.registry.agents) < prev_count:
+                    logger.info("Agents pruned by health check — triggering re-sync")
+                    self._last_sync_payload = None
+                    await self._sync_agents()
             except Exception:
                 logger.exception("Health check failed")
 
@@ -314,6 +365,14 @@ class HubDaemon:
                 await self._sync_agents()
             except Exception:
                 logger.exception("Agent re-sync failed")
+
+    async def _heartbeat_loop(self) -> None:
+        while not self._shutdown_event.is_set():
+            await asyncio.sleep(HEARTBEAT_INTERVAL)
+            try:
+                await self.relay.heartbeat()
+            except Exception:
+                logger.debug("Heartbeat failed (will retry next cycle)", exc_info=True)
 
     async def _sync_agents(self) -> None:
         payload = self.registry.to_sync_payload()

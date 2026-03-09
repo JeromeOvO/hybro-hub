@@ -407,26 +407,32 @@ class Dispatcher:
 
     @classmethod
     def _collect_parts_from_task(cls, task_dict: dict) -> tuple[str, list[dict]]:
-        """Collect text and non-text parts from a Task dict."""
-        all_text: list[str] = []
+        """Collect text and non-text parts from a Task dict.
+
+        Many A2A agents duplicate the response in both ``status.message``
+        and ``artifacts``.  To avoid doubled text, prefer artifact text
+        when available and only fall back to status.message text.
+        """
         all_non_text: list[dict] = []
 
-        # status.message parts
-        status_msg = task_dict.get("status", {}).get("message", {})
-        if status_msg:
-            t, nt = cls._collect_parts(status_msg.get("parts", []))
-            if t:
-                all_text.append(t)
-            all_non_text.extend(nt)
-
-        # artifact parts
+        artifact_texts: list[str] = []
         for artifact in task_dict.get("artifacts", []):
             t, nt = cls._collect_parts(artifact.get("parts", []))
             if t:
-                all_text.append(t)
+                artifact_texts.append(t)
             all_non_text.extend(nt)
 
-        return "".join(all_text), all_non_text
+        if artifact_texts:
+            return "".join(artifact_texts), all_non_text
+
+        status_msg = task_dict.get("status", {}).get("message", {})
+        if status_msg:
+            t, nt = cls._collect_parts(status_msg.get("parts", []))
+            all_non_text.extend(nt)
+            if t:
+                return t, all_non_text
+
+        return "", all_non_text
 
     @staticmethod
     def _extract_artifact_text(inner: dict) -> str:
