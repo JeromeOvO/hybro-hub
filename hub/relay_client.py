@@ -209,9 +209,9 @@ class RelayClient:
     async def subscribe(self) -> AsyncIterator[dict[str, Any]]:
         """Subscribe to relay SSE with auto-reconnect.
 
-        Yields user_message events. Handles connection_token and
-        heartbeat events internally. Flushes retry queue when a
-        new connection token is received.
+        Yields all business events (connection_token and heartbeat
+        handled internally). Flushes retry queue when a new
+        connection token is received.
         """
         delay = 1
         while not self._should_stop:
@@ -258,11 +258,7 @@ class RelayClient:
                     logger.debug("Heartbeat received")
                     continue
 
-                if event_type == "user_message":
-                    yield data
-                    continue
-
-                logger.debug("Unknown relay event type: %s", event_type)
+                yield data
 
     # ──── Status ────
 

@@ -136,7 +136,10 @@ class HubDaemon:
             await self._handle_user_reply(event)
             return
 
-        # Default: user_message
+        if event_type != "user_message":
+            logger.warning("Unhandled relay event type: %s", event_type)
+            return
+
         await self._handle_user_message(event)
 
     async def _handle_user_message(self, event: dict[str, Any]) -> None:

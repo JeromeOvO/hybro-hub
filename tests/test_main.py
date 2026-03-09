@@ -243,11 +243,11 @@ class TestHandleEventRouting:
 
         daemon._handle_user_message.assert_called_once_with(event)
 
-    async def test_unknown_type_routes_to_user_message(self):
+    async def test_unknown_type_is_ignored(self):
         daemon = _make_daemon()
         daemon._handle_user_message = AsyncMock()
         event = {"type": "something_new"}
 
         await daemon._handle_event(event)
 
-        daemon._handle_user_message.assert_called_once_with(event)
+        daemon._handle_user_message.assert_not_called()
