@@ -1,20 +1,273 @@
-# hybro-sdk
+# Hybro Hub
 
-Python SDK for the **Hybro Gateway API** — discover and communicate with cloud A2A agents through the Hybro platform.
+**Your local AI agents, accessible from anywhere. Your data stays on your machine.**
 
-## Installation
+[![PyPI](https://img.shields.io/pypi/v/hybro-sdk)](https://pypi.org/project/hybro-sdk/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 
-```bash
-pip install hybro-sdk
+Hybro Hub is a lightweight daemon that connects your local AI agents to [hybro.ai](https://hybro.ai) — so you can use local and cloud agents side by side in one portal, with full control over where your data goes.
+
+```
+pip install hybro-hub
 ```
 
-Or with [A2A SDK](https://pypi.org/project/a2a-sdk/) types for advanced usage:
+---
+
+## The Problem
+
+AI agents today force a choice:
+
+- **Cloud platforms** (ChatGPT, Devin, Cursor Cloud) are powerful but require sending your data to third-party servers.
+- **Local runtimes** (Ollama, LM Studio) keep data private but are isolated — no access to specialized cloud agents, no shared UI.
+
+You shouldn't have to choose between **privacy** and **power**.
+
+## The Solution
+
+Hybro Hub bridges local and cloud. Open [hybro.ai](https://hybro.ai), see your local Ollama model next to cloud agents like a legal reviewer or code analyst. Chat with any of them. Your local agents process on your machine — your data never leaves. Cloud agents are there when you need more capability.
+
+One portal. Your choice, per conversation.
+
+---
+
+## Get Started in 5 Minutes
+
+### 1. Install
 
 ```bash
-pip install "hybro-sdk[a2a]"
+pip install hybro-hub
 ```
 
-## Quickstart
+### 2. Get your API key
+
+Go to [hybro.ai/settings](https://hybro.ai) → API Keys → **Generate New Key**. Copy the key (starts with `hba_`).
+
+### 3. Start the hub
+
+```bash
+hybro-hub start --api-key hba_your_key_here
+```
+
+### 4. Launch a local agent
+
+Start a local LLM as an A2A agent (requires [Ollama](https://ollama.com) installed):
+
+```bash
+hybro-hub agent start ollama --model llama3.2:8b
+```
+
+You'll see:
+
+```
+🔗 Connected to hybro.ai
+📡 Found 1 local agent:
+   • My Ollama Chat (llama3.2:8b) — localhost:10010
+Agents synced to hybro.ai. Open hybro.ai to start chatting.
+```
+
+### 5. Open hybro.ai
+
+Refresh [hybro.ai](https://hybro.ai). Your local agent appears alongside cloud agents:
+
+```
+  ☁️  Legal Contract Reviewer          (cloud)
+  ☁️  Code Review Pro                  (cloud)
+  🏠  My Ollama Chat (llama3.2:8b)     (local · online)
+```
+
+Add it to a room, send a message. The response streams back with a **🏠 Local** badge — your data never left your machine.
+
+---
+
+## How It Works
+
+```
+┌─────────────────────────────────────────────────┐
+│  Your Machine                                   │
+│                                                 │
+│   Hybro Hub (background daemon)                 │
+│   ├── Your local agents (Ollama, custom, etc.)  │
+│   ├── Privacy router                            │
+│   └── Relay client ──outbound HTTPS only──┐     │
+│                                           │     │
+└───────────────────────────────────────────┼─────┘
+                                            │
+                                            ▼
+┌─────────────────────────────────────────────────┐
+│  hybro.ai Cloud                                 │
+│                                                 │
+│   ├── Web portal (your browser)                 │
+│   ├── Cloud agents (marketplace)                │
+│   ├── Relay service (routes to your hub)        │
+│   └── Message history & rooms                   │
+└─────────────────────────────────────────────────┘
+```
+
+**Key properties:**
+
+- **Outbound-only** — the hub initiates all connections. No inbound ports, no firewall changes, works behind NAT.
+- **Portal-first** — you always use hybro.ai. No localhost URLs, no mode switching. Local agents just appear as more agents in the same portal.
+- **A2A protocol** — local and cloud agents speak the same [Agent-to-Agent protocol](https://github.com/google/A2A). Any A2A-compatible agent works.
+- **Graceful degradation** — if the hub is offline, cloud agents still work. Local agents show as "offline" and messages queue until the hub reconnects.
+
+---
+
+## Privacy by Architecture
+
+Hybro Hub doesn't just promise privacy — the architecture enforces it.
+
+**Your data stays local when you use local agents.** Messages to local agents route through the relay to your hub, get processed entirely on your machine, and only the response travels back. The cloud relay sees message metadata (routing info), not your content.
+
+### Privacy indicators in the UI
+
+Every message in hybro.ai shows where it was processed:
+
+- 🏠 **Local** (green) — processed on your machine, data did not leave
+- ☁️ **Cloud** (blue) — processed by a cloud agent via hybro.ai
+
+### Sensitivity detection
+
+The hub scans outbound messages for sensitive content before they reach cloud agents:
+
+- **PII detection** — emails, phone numbers, SSNs, credit cards, API keys
+- **Custom keywords** — configure terms like "medical", "financial", "confidential"
+- **Custom patterns** — add regex rules for project-specific data (e.g., `PROJ-\d{4}`)
+
+> Phase 2 logs detections. Active blocking and anonymization are on the roadmap.
+
+---
+
+## CLI Reference
+
+### `hybro-hub start`
+
+Start the hub daemon. Connects to hybro.ai, discovers local agents, and syncs them to the cloud.
+
+```bash
+hybro-hub start --api-key hba_...
+```
+
+The API key is saved to `~/.hybro/config.yaml` after first use — subsequent starts don't need it.
+
+### `hybro-hub status`
+
+Check if the hub is connected and how many agents are synced.
+
+```bash
+hybro-hub status
+```
+
+### `hybro-hub agents`
+
+List all discovered local agents and their health status.
+
+```bash
+hybro-hub agents
+```
+
+### `hybro-hub agent start`
+
+Launch a local A2A agent from a bundled adapter.
+
+```bash
+hybro-hub agent start ollama --model llama3.2:8b --port 10010
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--model` | `llama3.2:8b` | Ollama model to use |
+| `--port` | `10010` | Port for the A2A agent server |
+| `--system-prompt` | — | Custom system prompt |
+
+> Requires [Ollama](https://ollama.com) running locally. Install the `a2a-adapter` package for the Ollama adapter: `pip install "hybro-sdk[ollama]"`
+
+---
+
+## Configuration
+
+The hub reads from `~/.hybro/config.yaml`. A full example:
+
+```yaml
+# Cloud connection
+cloud:
+  api_key: "hba_..."
+  gateway_url: "https://api.hybro.ai"
+
+# Agent discovery
+agents:
+  auto_discover: true           # Probe localhost ports for A2A agents
+  auto_discover_exclude_ports:  # Skip non-agent ports
+    - 22    # SSH
+    - 3306  # MySQL
+    - 5432  # PostgreSQL
+  local:                        # Always-registered agents
+    - name: "My Custom Agent"
+      url: "http://localhost:9001"
+
+# Privacy
+privacy:
+  default_routing: "local_first"
+  sensitive_keywords: ["medical", "financial", "confidential"]
+  sensitive_patterns: ["PROJ-\\d{4}"]
+
+# Heartbeat (seconds)
+heartbeat_interval: 30
+```
+
+You can also set the API key and gateway URL via environment variables:
+
+```bash
+export HYBRO_API_KEY="hba_..."
+export HYBRO_GATEWAY_URL="https://api.hybro.ai"
+```
+
+---
+
+## Bring Your Own Agent
+
+Any agent that speaks the [A2A protocol](https://github.com/google/A2A) works with Hybro Hub.
+
+### Auto-discovery
+
+With `auto_discover: true` (the default), the hub automatically finds A2A agents running on localhost by probing listening TCP ports for agent cards at `/.well-known/agent-card.json`. Just start your agent — the hub will find it.
+
+### Manual registration
+
+Add agents to `~/.hybro/config.yaml`:
+
+```yaml
+agents:
+  local:
+    - name: "My Research Agent"
+      url: "http://localhost:8001"
+    - name: "Team Agent"
+      url: "http://192.168.1.50:8080"  # LAN agents work too
+```
+
+### Building an A2A agent
+
+Use the [a2a-python SDK](https://github.com/google/A2A/tree/main/sdks/python) to build a compatible agent:
+
+```python
+from a2a.server.apps import A2AStarletteApplication
+from a2a.server.request_handlers import DefaultRequestHandler
+
+app = A2AStarletteApplication(
+    agent_card=my_card,
+    http_handler=DefaultRequestHandler(agent_executor=my_executor),
+)
+```
+
+The hub discovers it automatically and syncs it to hybro.ai.
+
+---
+
+## Hybro SDK (Python Client)
+
+The repo also ships `hybro_sdk` — a Python client for calling cloud agents programmatically via the Hybro Gateway API. Use this when you want to integrate cloud agents into your own code, outside of the hub.
+
+### Quickstart
 
 ```python
 import asyncio
@@ -22,135 +275,53 @@ from hybro_sdk import HybroGateway
 
 async def main():
     async with HybroGateway(api_key="hba_...") as gw:
-        # Discover agents
         agents = await gw.discover("legal contract review")
-        print(f"Found {len(agents)} agents")
-
-        # Send a synchronous message
-        result = await gw.send(agents[0].agent_id, "Review this contract...")
-        print(result)
-
-        # Stream a response
-        async for event in gw.stream(agents[0].agent_id, "Summarize findings"):
+        async for event in gw.stream(agents[0].agent_id, "Review this NDA"):
             print(event.data)
-
-        # Get an agent card
-        card = await gw.get_card(agents[0].agent_id)
-        print(card)
 
 asyncio.run(main())
 ```
 
-## API Reference
-
-### `HybroGateway(api_key, base_url="https://api.hybro.ai/api/v1", timeout=120.0)`
-
-The main client. Supports `async with` for automatic cleanup.
-
-| Parameter  | Type  | Description |
-|-----------|-------|-------------|
-| `api_key` | `str` | Your Hybro API key (starts with `hba_`) |
-| `base_url` | `str` | Gateway base URL |
-| `timeout` | `float` | Request timeout in seconds |
-
 ### Methods
 
-#### `discover(query, *, limit=None) -> list[AgentInfo]`
+| Method | Description |
+|--------|-------------|
+| `discover(query, *, limit=None)` | Search for agents by natural language. Returns `list[AgentInfo]`. |
+| `send(agent_id, text, *, context_id=None)` | Send a message, get the full response. Returns `dict`. |
+| `stream(agent_id, text, *, context_id=None)` | Stream a response via SSE. Yields `StreamEvent`. |
+| `get_card(agent_id)` | Fetch an agent's A2A card. Returns `dict`. |
 
-Search for agents matching a natural-language query.
-
-```python
-agents = await gw.discover("data analysis", limit=10)
-for a in agents:
-    print(a.agent_id, a.agent_card["name"], a.match_score)
-```
-
-#### `send(agent_id, text, *, context_id=None) -> dict`
-
-Send a synchronous message and get the full A2A response.
+### Error handling
 
 ```python
-result = await gw.send("agent-123", "What is 2+2?")
-```
-
-#### `stream(agent_id, text, *, context_id=None) -> AsyncIterator[StreamEvent]`
-
-Stream a message and receive SSE events as they arrive.
-
-```python
-async for event in gw.stream("agent-123", "Write a story"):
-    if event.is_error:
-        print("Error:", event.data)
-        break
-    print(event.data)
-```
-
-#### `get_card(agent_id) -> dict`
-
-Fetch an agent's card with gateway-masked URL.
-
-```python
-card = await gw.get_card("agent-123")
-print(card["agent_card"]["name"])
-```
-
-## Error Handling
-
-The SDK raises typed exceptions for common error scenarios:
-
-```python
-from hybro_sdk import (
-    GatewayError,
-    AuthError,
-    AccessDeniedError,
-    AgentNotFoundError,
-    AgentCommunicationError,
-    RateLimitError,
-)
+from hybro_sdk import AuthError, RateLimitError, AgentNotFoundError
 
 try:
     result = await gw.send(agent_id, "Hello")
 except AuthError:
     print("Invalid API key")
-except AccessDeniedError:
-    print("No access to this agent")
 except AgentNotFoundError:
-    print("Agent not found or inactive")
+    print("Agent not found")
 except RateLimitError as e:
-    print(f"Rate limited, retry after {e.retry_after}s")
-except AgentCommunicationError:
-    print("Upstream agent failed to respond")
-except GatewayError as e:
-    print(f"Gateway error ({e.status_code}): {e}")
+    print(f"Rate limited — retry after {e.retry_after}s")
 ```
 
-These typed exceptions are raised consistently for both synchronous (`send`) and streaming (`stream`) calls. For `stream()`, authentication and access errors are raised *before* the SSE connection opens, while mid-stream upstream failures are yielded as error events (`event.is_error`).
-
-| Exception | HTTP Status | When |
-|-----------|-------------|------|
-| `AuthError` | 401 | Missing or invalid API key |
-| `AccessDeniedError` | 403 | No access to private agent |
-| `AgentNotFoundError` | 404 | Agent doesn't exist or is inactive |
+| Exception | Status | Cause |
+|-----------|--------|-------|
+| `AuthError` | 401 | Invalid API key |
+| `AccessDeniedError` | 403 | No access to agent |
+| `AgentNotFoundError` | 404 | Agent not found / inactive |
 | `RateLimitError` | 429 | Rate limit exceeded |
-| `AgentCommunicationError` | 502 | Upstream agent failed |
-| `GatewayError` | any | Base class for all errors |
+| `AgentCommunicationError` | 502 | Upstream agent error |
+| `GatewayError` | any | Base class |
 
-## Models
+---
 
-### `AgentInfo`
+## Requirements
 
-Returned by `discover()`.
-
-- `agent_id: str` — unique agent identifier
-- `agent_card: dict` — full A2A AgentCard (gateway-masked URL)
-- `match_score: float` — similarity score (0–1)
-
-### `StreamEvent`
-
-Yielded by `stream()`.
-
-- `data: dict` — raw JSON payload from the SSE event
-- `is_error: bool` — `True` if the event contains an error
+- Python 3.11+
+- [Ollama](https://ollama.com) (optional, for the built-in Ollama adapter)
+- A [hybro.ai](https://hybro.ai) account with an API key
 
 ## Development
 
@@ -163,4 +334,4 @@ pytest
 
 ## License
 
-MIT
+Apache License 2.0 — see [LICENSE](LICENSE) for details.
