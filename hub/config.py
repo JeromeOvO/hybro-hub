@@ -55,6 +55,9 @@ class HubConfig(BaseModel):
     auto_discover_exclude_ports: list[int] = Field(
         default_factory=lambda: [22, 53, 80, 443, 3306, 5432, 6379, 27017],
     )
+    # Optional [start, end] range for the connect-scan fallback strategy.
+    # When null the full unprivileged range (1024–65535) is used.
+    auto_discover_scan_range: list[int] | None = None
 
     privacy_default_routing: str = "local_first"
     privacy_sensitive_keywords: list[str] = Field(default_factory=list)
@@ -103,6 +106,10 @@ def load_config(
                 if "auto_discover_exclude_ports" in agents_section:
                     data["auto_discover_exclude_ports"] = agents_section[
                         "auto_discover_exclude_ports"
+                    ]
+                if "auto_discover_scan_range" in agents_section:
+                    data["auto_discover_scan_range"] = agents_section[
+                        "auto_discover_scan_range"
                     ]
         logger.info("Loaded config from %s", path)
 
