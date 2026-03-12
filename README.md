@@ -108,7 +108,7 @@ Add it to a room, send a message. The response streams back with a **🏠 Local*
 
 - **Outbound-only** — the hub initiates all connections. No inbound ports, no firewall changes, works behind NAT.
 - **Portal-first** — you always use hybro.ai. No localhost URLs, no mode switching. Local agents just appear as more agents in the same portal.
-- **A2A protocol** — local and cloud agents speak the same [Agent-to-Agent protocol](https://github.com/google/A2A). Any A2A-compatible agent works.
+- **A2A protocol** — local and cloud agents speak the same [Agent-to-Agent protocol](https://github.com/a2aproject/A2A). Any A2A-compatible agent works.
 - **Graceful degradation** — if the hub is offline, cloud agents still work. Local agents show as "offline" and messages queue until the hub reconnects.
 
 ---
@@ -177,7 +177,7 @@ hybro-hub agent start ollama
 hybro-hub agent start ollama --model mistral:7b --port 10020 --system-prompt "You are a helpful assistant"
 ```
 
-**OpenClaw** — AI coding agent (requires [OpenClaw](https://openclaw.com)):
+**OpenClaw** — AI coding agent (requires [OpenClaw](https://openclaw.ai)):
 
 ```bash
 hybro-hub agent start openclaw
@@ -255,7 +255,7 @@ export HYBRO_GATEWAY_URL="https://api.hybro.ai"
 
 ## Bring Your Own Agent
 
-Any agent that speaks the [A2A protocol](https://github.com/google/A2A) works with Hybro Hub.
+Any agent that speaks the [A2A protocol](https://github.com/a2aproject/A2A) works with Hybro Hub.
 
 ### Auto-discovery
 
