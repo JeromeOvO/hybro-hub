@@ -27,7 +27,7 @@ class HybroGateway:
 
     Usage::
 
-        async with HybroGateway(api_key="hba_...") as gw:
+        async with HybroGateway(api_key="hybro_...") as gw:
             agents = await gw.discover("legal contract review")
             result = await gw.send(agents[0].agent_id, "Review this contract")
     """

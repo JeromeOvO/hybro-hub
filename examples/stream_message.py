@@ -3,7 +3,7 @@
 import asyncio
 from hybro_sdk import HybroGateway
 
-API_KEY = "hba_your_api_key_here"
+API_KEY = "hybro_your_api_key_here"
 AGENT_ID = "your-agent-id"
 
 
