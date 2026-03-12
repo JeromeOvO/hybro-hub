@@ -2,14 +2,14 @@
 
 **Your local AI agents, accessible from anywhere. Your data stays on your machine.**
 
-[![PyPI](https://img.shields.io/pypi/v/hybro-sdk)](https://pypi.org/project/hybro-sdk/)
+[![PyPI](https://img.shields.io/pypi/v/hybro-hub)](https://pypi.org/project/hybro-hub/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 
 Hybro Hub is a lightweight daemon that connects your local AI agents to [hybro.ai](https://hybro.ai) — so you can use local and cloud agents side by side in one portal, with full control over where your data goes.
 
 ```
-pip install hybro-sdk
+pip install hybro-hub
 ```
 
 ---
@@ -36,7 +36,7 @@ One portal. Your choice, per conversation.
 ### 1. Install
 
 ```bash
-pip install hybro-sdk
+pip install hybro-hub
 ```
 
 ### 2. Get your API key
