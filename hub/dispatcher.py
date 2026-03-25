@@ -109,7 +109,7 @@ class Dispatcher:
                         result.task_id = event.data.get("task_id") or result.task_id
                         result.context_id = event.data.get("context_id") or result.context_id
 
-                if not result.artifact_text and not result.text and result.task_id:
+                if not result.artifact_text and result.task_id:
                     result = await self._refetch_final_task(agent, result)
             else:
                 result = await self._dispatch_sync(agent, message_dict)
@@ -175,6 +175,11 @@ class Dispatcher:
                     "status_text": result.text,
                 },
             ).to_publish_dict())
+            events.append(DispatchEvent(
+                type="processing_status",
+                agent_message_id=agent_message_id,
+                data={"status": "input_required", "user_message_id": user_message_id},
+            ).to_publish_dict())
             return
 
         response_text = result.artifact_text or result.text
@@ -192,6 +197,27 @@ class Dispatcher:
             agent_message_id=agent_message_id,
             data={"status": "completed", "user_message_id": user_message_id},
         ).to_publish_dict())
+
+    # ──── Cancel ────
+
+    async def cancel_task(self, agent: LocalAgent, task_id: str) -> None:
+        """Best-effort cancellation of an in-flight task on a local agent.
+
+        Raises on network or HTTP errors — callers should catch and log.
+        """
+        client = await self._get_client()
+        body = {
+            "jsonrpc": "2.0",
+            "id": uuid4().hex,
+            "method": "tasks/cancel",
+            "params": {"id": task_id},
+        }
+        resp = await client.post(
+            agent.url,
+            json=body,
+            headers={"Content-Type": "application/json"},
+        )
+        logger.info("Cancel response from %s: %d", agent.name, resp.status_code)
 
     # ──── Sync dispatch (message/send) ────
 
@@ -446,15 +472,11 @@ class Dispatcher:
 
         return "", all_non_text
 
-    @staticmethod
-    def _extract_artifact_text(inner: dict) -> str:
+    @classmethod
+    def _extract_artifact_text(cls, inner: dict) -> str:
         """Extract text content from an artifact-update event."""
-        artifact = inner.get("artifact", {})
-        for p in artifact.get("parts", []):
-            root = p.get("root", p)
-            if "text" in root:
-                return root["text"]
-        return ""
+        text, _ = cls._collect_parts(inner.get("artifact", {}).get("parts", []))
+        return text
 
     @staticmethod
     def _collect_non_text_parts_from_artifact(inner: dict) -> list[dict]:
@@ -467,24 +489,18 @@ class Dispatcher:
                 non_text.append(p)
         return non_text
 
-    @staticmethod
-    def _extract_status_text(inner: dict) -> str:
+    @classmethod
+    def _extract_status_text(cls, inner: dict) -> str:
         """Extract text from a status-update event's message."""
         msg = inner.get("status", {}).get("message", {})
-        for p in msg.get("parts", []):
-            root = p.get("root", p)
-            if "text" in root:
-                return root["text"]
-        return ""
+        text, _ = cls._collect_parts(msg.get("parts", []))
+        return text
 
-    @staticmethod
-    def _extract_message_text(inner: dict) -> str:
+    @classmethod
+    def _extract_message_text(cls, inner: dict) -> str:
         """Extract text from a message event."""
-        for p in inner.get("parts", []):
-            root = p.get("root", p)
-            if "text" in root:
-                return root["text"]
-        return ""
+        text, _ = cls._collect_parts(inner.get("parts", []))
+        return text
 
     @staticmethod
     def _collect_non_text_parts_from_message(inner: dict) -> list[dict]:

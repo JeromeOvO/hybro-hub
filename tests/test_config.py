@@ -176,6 +176,11 @@ class TestHubConfigDefaults:
         assert config.agents.auto_discover is True
         assert config.publish_queue.enabled is True
 
+    def test_hub_id_empty_raises(self) -> None:
+        """Directly constructing HubConfig with empty hub_id must fail validation."""
+        with pytest.raises(Exception):
+            HubConfig(hub_id="")
+
 
 # ── hub_id persistence ────────────────────────────────────────────────────────
 

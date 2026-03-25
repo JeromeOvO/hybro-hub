@@ -12,6 +12,8 @@ import signal
 from typing import Any
 from uuid import uuid4
 
+import httpx
+
 from .agent_registry import AgentRegistry
 from .config import HYBRO_DIR, HubConfig
 from .dispatcher import Dispatcher
@@ -22,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 HEALTH_CHECK_INTERVAL = 60
 RESYNC_INTERVAL = 120
-HEARTBEAT_INTERVAL = 30
 
 CONNECTION_ERROR_TYPES = frozenset({
     "ConnectError",
@@ -102,7 +103,27 @@ class HubDaemon:
                 )
 
         # Register with relay
-        await self.relay.register()
+        try:
+            await self.relay.register()
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            if status == 401:
+                logger.error(
+                    "Hub registration failed: invalid API key (401). "
+                    "Run: hybro-hub start --api-key hybro_..."
+                )
+            else:
+                logger.error(
+                    "Hub registration failed with HTTP %d: %s",
+                    status, exc.response.text,
+                )
+            raise SystemExit(1)
+        except httpx.ConnectError as exc:
+            logger.error(
+                "Hub registration failed: cannot reach %s (%s)",
+                self.config.cloud.gateway_url, exc,
+            )
+            raise SystemExit(1)
 
         # Discover local agents
         agents = await self.registry.discover()
@@ -256,21 +277,7 @@ class HubDaemon:
 
         logger.info("Forwarding cancel_task to %s (task=%s)", agent.name, task_id)
         try:
-            client = await self.dispatcher._get_client()
-            cancel_body = {
-                "jsonrpc": "2.0",
-                "id": uuid4().hex,
-                "method": "tasks/cancel",
-                "params": {"id": task_id},
-            }
-            resp = await client.post(
-                agent.url,
-                json=cancel_body,
-                headers={"Content-Type": "application/json"},
-            )
-            logger.info(
-                "Cancel response from %s: %d", agent.name, resp.status_code
-            )
+            await self.dispatcher.cancel_task(agent, task_id)
         except Exception:
             logger.warning("Failed to cancel task on %s (best-effort)", agent.name, exc_info=True)
 
@@ -413,7 +420,7 @@ class HubDaemon:
 
     async def _heartbeat_loop(self) -> None:
         while not self._shutdown_event.is_set():
-            await asyncio.sleep(HEARTBEAT_INTERVAL)
+            await asyncio.sleep(self.config.heartbeat_interval)
             try:
                 await self.relay.heartbeat()
             except Exception:

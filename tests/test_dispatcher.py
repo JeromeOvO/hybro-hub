@@ -230,6 +230,10 @@ class TestExtractArtifactText:
         data = {"artifact": {"parts": [{"root": {"text": "nested"}}]}}
         assert Dispatcher._extract_artifact_text(data) == "nested"
 
+    def test_multi_part_concatenated(self):
+        data = {"artifact": {"parts": [{"text": "hello "}, {"text": "world"}]}}
+        assert Dispatcher._extract_artifact_text(data) == "hello world"
+
     def test_empty(self):
         assert Dispatcher._extract_artifact_text({}) == ""
 
@@ -245,8 +249,31 @@ class TestExtractStatusText:
         data = {"status": {"message": {"parts": [{"root": {"text": "nested"}}]}}}
         assert Dispatcher._extract_status_text(data) == "nested"
 
+    def test_multi_part_concatenated(self):
+        data = {"status": {"message": {"parts": [{"text": "step1 "}, {"text": "step2"}]}}}
+        assert Dispatcher._extract_status_text(data) == "step1 step2"
+
     def test_empty(self):
         assert Dispatcher._extract_status_text({}) == ""
+
+
+class TestExtractMessageText:
+    """Tests for Dispatcher._extract_message_text."""
+
+    def test_single_part(self):
+        data = {"parts": [{"text": "hello"}]}
+        assert Dispatcher._extract_message_text(data) == "hello"
+
+    def test_multi_part_concatenated(self):
+        data = {"parts": [{"text": "foo "}, {"text": "bar"}]}
+        assert Dispatcher._extract_message_text(data) == "foo bar"
+
+    def test_with_root_wrapper(self):
+        data = {"parts": [{"root": {"text": "wrapped"}}]}
+        assert Dispatcher._extract_message_text(data) == "wrapped"
+
+    def test_empty(self):
+        assert Dispatcher._extract_message_text({}) == ""
 
 
 class TestCollectParts:
@@ -271,6 +298,73 @@ class TestCollectParts:
         text, non_text = Dispatcher._collect_parts([])
         assert text == ""
         assert non_text == []
+
+
+class TestInteractiveState:
+    """_emit_terminal_events must emit both task_interactive and processing_status."""
+
+    def test_input_required_emits_both_events(self):
+        dispatcher = Dispatcher()
+        from hub.dispatcher import DispatchResult
+        result = DispatchResult(task_state="input-required", task_id="t-1", context_id="ctx-1")
+        events: list[dict] = []
+        dispatcher._emit_terminal_events(events, result, "am-001", "um-001")
+
+        types = [e["type"] for e in events]
+        assert "task_interactive" in types
+        assert "processing_status" in types
+
+        interactive = next(e for e in events if e["type"] == "task_interactive")
+        assert interactive["data"]["state"] == "input-required"
+        assert interactive["data"]["task_id"] == "t-1"
+
+        status = next(e for e in events if e["type"] == "processing_status")
+        assert status["data"]["status"] == "input_required"
+        assert status["data"]["user_message_id"] == "um-001"
+
+    def test_auth_required_emits_both_events(self):
+        dispatcher = Dispatcher()
+        from hub.dispatcher import DispatchResult
+        result = DispatchResult(task_state="auth-required")
+        events: list[dict] = []
+        dispatcher._emit_terminal_events(events, result, "am-002", None)
+
+        types = [e["type"] for e in events]
+        assert "task_interactive" in types
+        assert "processing_status" in types
+
+
+class TestCancelTask:
+    """Tests for Dispatcher.cancel_task()."""
+
+    @pytest.mark.asyncio
+    async def test_cancel_success(self, agent):
+        dispatcher = Dispatcher()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        dispatcher._client = mock_client
+
+        await dispatcher.cancel_task(agent, "task-xyz")
+
+        mock_client.post.assert_called_once()
+        call_kwargs = mock_client.post.call_args
+        body = call_kwargs[1]["json"]
+        assert body["method"] == "tasks/cancel"
+        assert body["params"]["id"] == "task-xyz"
+
+    @pytest.mark.asyncio
+    async def test_cancel_propagates_exception(self, agent):
+        dispatcher = Dispatcher()
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client.post = AsyncMock(side_effect=Exception("network error"))
+        dispatcher._client = mock_client
+
+        with pytest.raises(Exception, match="network error"):
+            await dispatcher.cancel_task(agent, "task-xyz")
 
 
 # ──── Helpers for streaming tests ────

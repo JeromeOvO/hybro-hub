@@ -212,6 +212,38 @@ class TestHandleCancelTaskUnknownAgent:
         daemon.relay.publish.assert_not_called()
 
 
+class TestHandleCancelTaskHappyPath:
+    async def test_delegates_to_dispatcher_cancel_task(self):
+        daemon = _make_daemon()
+        daemon.registry.get_agent.return_value = AGENT
+        daemon.dispatcher.cancel_task = AsyncMock()
+
+        event = {
+            "type": "cancel_task",
+            "local_agent_id": "agent-1",
+            "agent_message_id": "amsg-99",
+            "task_id": "task-42",
+        }
+        await daemon._handle_cancel_task(event)
+
+        daemon.dispatcher.cancel_task.assert_called_once_with(AGENT, "task-42")
+
+    async def test_swallows_dispatcher_exception(self):
+        """cancel_task is best-effort — dispatcher errors must not propagate."""
+        daemon = _make_daemon()
+        daemon.registry.get_agent.return_value = AGENT
+        daemon.dispatcher.cancel_task = AsyncMock(side_effect=Exception("timeout"))
+
+        event = {
+            "type": "cancel_task",
+            "local_agent_id": "agent-1",
+            "agent_message_id": "amsg-99",
+            "task_id": "task-42",
+        }
+        # Should not raise
+        await daemon._handle_cancel_task(event)
+
+
 # ──── _handle_event routing ────
 
 

@@ -146,6 +146,15 @@ class HubConfig(BaseModel):
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     publish_queue: PublishQueueConfig = Field(default_factory=PublishQueueConfig)
 
+    @field_validator("hub_id")
+    @classmethod
+    def _validate_hub_id(cls, v: str) -> str:
+        if not v:
+            raise ValueError(
+                "hub_id must not be empty — use load_config() to construct HubConfig"
+            )
+        return v
+
 
 def _expand_env_vars(text: str) -> str:
     """Expand ${VAR} and ${VAR:-default} references before YAML parsing.
