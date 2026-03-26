@@ -141,7 +141,7 @@ The hub scans outbound messages for sensitive content before they reach cloud ag
 - **Custom keywords** — configure terms like "medical", "financial", "confidential"
 - **Custom patterns** — add regex rules for project-specific data (e.g., `PROJ-\d{4}`)
 
-> Phase 2 logs detections. Active blocking and anonymization are on the roadmap.
+> Currently logs detections only. Active blocking and anonymization are planned for a future release.
 
 ---
 
@@ -258,40 +258,67 @@ hybro-hub agent start n8n --webhook-url http://localhost:5678/webhook/my-agent
 
 ## Configuration
 
-The hub reads from `~/.hybro/config.yaml`. A full example:
+The hub reads from `~/.hybro/config.yaml`. A minimal working example:
+
+```yaml
+cloud:
+  api_key: ${HYBRO_API_KEY}   # or paste directly: "hybro_your_key_here"
+```
+
+A fully-annotated template is available in [`config.yaml.example`](config.yaml.example). Below is a representative example covering all sections:
 
 ```yaml
 # Cloud connection
 cloud:
-  api_key: "hybro_..."
+  api_key: ${HYBRO_API_KEY}          # or ${HYBRO_API_KEY:-} to allow unset
   gateway_url: "https://api.hybro.ai"
 
 # Agent discovery
 agents:
-  auto_discover: true # Probe localhost ports for A2A agents
-  auto_discover_exclude_ports: # Skip non-agent ports
-    - 22 # SSH
-    - 3306 # MySQL
-    - 5432 # PostgreSQL
-  local: # Always-registered agents
+  auto_discover: true                  # probe localhost ports for A2A agents
+  auto_discover_exclude_ports:         # skip non-agent ports (built-in defaults shown)
+    - 22    # SSH
+    - 53    # DNS
+    - 80    # HTTP
+    - 443   # HTTPS
+    - 3306  # MySQL
+    - 5432  # PostgreSQL
+    - 6379  # Redis
+    - 27017 # MongoDB
+  # auto_discover_scan_range: [10000, 11000]  # restrict scan to a port range
+  local:                               # always-registered agents
     - name: "My Custom Agent"
       url: "http://localhost:9001"
 
-# Privacy
+# Privacy (classification is logging-only; messages are not blocked or rerouted)
 privacy:
-  default_routing: "local_first"
   sensitive_keywords: ["medical", "financial", "confidential"]
   sensitive_patterns: ["PROJ-\\d{4}"]
 
-# Heartbeat (seconds)
+# Offline resilience — events that fail delivery are queued to disk and retried
+publish_queue:
+  enabled: true
+  max_size_mb: 50
+  ttl_hours: 24
+  drain_interval: 30        # seconds between retry cycles
+  drain_batch_size: 20
+  max_retries_critical: 20  # agent_response, agent_error, processing_status
+  max_retries_normal: 5     # task_submitted, artifact_update, task_status
+
+# Heartbeat interval (seconds)
 heartbeat_interval: 30
 ```
 
-You can also set the API key and gateway URL via environment variables:
+The config file supports `${VAR}`, `${VAR:-default}`, and `$${VAR}` (literal) environment variable references (expanded before parsing, matching the OTel Collector convention). To set the API key via a shell environment variable without editing the file, add to your shell profile:
 
 ```bash
 export HYBRO_API_KEY="hybro_..."
-export HYBRO_GATEWAY_URL="https://api.hybro.ai"
+```
+
+Or set it once via the CLI (saves the literal key to the config file):
+
+```bash
+hybro-hub start --api-key hybro_...
 ```
 
 ---

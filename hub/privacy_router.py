@@ -1,8 +1,7 @@
 """Privacy router — sensitivity classification for hub messages.
 
-Phase 2b: logging/warning only. The cloud backend already decides which
-local agent to target; this router classifies and logs but does NOT
-block or re-route relay-dispatched messages.
+Classifies and logs message sensitivity but does NOT block or re-route
+messages. The cloud backend decides which local agent to target.
 """
 
 from __future__ import annotations
@@ -32,21 +31,19 @@ class SensitivityLevel(str, Enum):
 class PrivacyRouter:
     """Classifies message sensitivity and logs the result.
 
-    In Phase 2b, this does NOT gate or re-route messages.
+    Does NOT gate or re-route messages — classification is informational only.
     """
 
     def __init__(
         self,
         sensitive_keywords: list[str] | None = None,
         sensitive_patterns: list[str] | None = None,
-        default_routing: str = "local_first",
     ) -> None:
         self._keywords = [k.lower() for k in (sensitive_keywords or [])]
         self._user_patterns = [re.compile(p, re.IGNORECASE) for p in (sensitive_patterns or [])]
         self._builtin_patterns = [
             (re.compile(p, re.IGNORECASE), label) for p, label in _BUILTIN_PATTERNS
         ]
-        self._default_routing = default_routing
 
     def classify(self, text: str) -> SensitivityLevel:
         """Classify text sensitivity.
@@ -54,7 +51,7 @@ class PrivacyRouter:
         Returns:
             HIGH if PII or sensitive keywords detected.
             LOW otherwise.
-            MEDIUM is reserved for Phase 3 LLM classification.
+            MEDIUM is reserved for future LLM-based classification.
         """
         lower = text.lower()
 
@@ -90,7 +87,7 @@ class PrivacyRouter:
         if level == SensitivityLevel.HIGH:
             logger.warning(
                 "Message to '%s' classified as HIGH sensitivity. "
-                "In Phase 2b this is logged only — message will still be dispatched.",
+                "Currently logged only — message will still be dispatched.",
                 agent_name,
             )
         else:
