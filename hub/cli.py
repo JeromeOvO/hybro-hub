@@ -581,6 +581,11 @@ def agent_start(
     Supported adapters: ollama, openclaw, n8n.
 
     \b
+    CLI flags are a convenience shortcut for common parameters.
+    For full adapter control (e.g. n8n message_field, custom headers),
+    use --config with a YAML file instead.
+
+    \b
     Examples:
       hybro-hub agent start ollama
       hybro-hub agent start ollama --model mistral:7b --port 10020
@@ -615,8 +620,10 @@ def agent_start(
                 err=True,
             )
             sys.exit(1)
-        # CLI flags override config file values
-        if port != 10010:
+        # CLI flags override config file values.
+        # Use ParameterSource to detect flags the user explicitly provided,
+        # rather than comparing against hard-coded default values.
+        if ctx.get_parameter_source("port") == click.core.ParameterSource.COMMANDLINE:
             config["port"] = port
         if agent_name:
             config["name"] = agent_name
@@ -675,8 +682,14 @@ def agent_start(
         )
         sys.exit(1)
 
+    # Strip hub-level keys before handing config to the adapter loader.
+    # "port" and "name" are hybro-hub concerns and are not valid constructor
+    # arguments for any a2a-adapter class.
+    # "adapter" is intentionally kept: load_adapter() pops it internally to
+    # determine which class to instantiate.
+    _HUB_KEYS = {"port", "name"}
     try:
-        adapter = load_adapter(config)
+        adapter = load_adapter({k: v for k, v in config.items() if k not in _HUB_KEYS})
     except ImportError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
