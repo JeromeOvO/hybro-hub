@@ -32,7 +32,7 @@ for _mod in [
 
 from hub import config as hub_config  # noqa: E402
 from hub import lock as hub_lock  # noqa: E402
-from hub.cli import _ENV_DAEMON_CHILD, _add_file_logging, _remove_lock_file, main  # noqa: E402
+from hub.cli import _ENV_DAEMON_CHILD, _add_file_logging, _find_orphan_daemon, _remove_lock_file, main  # noqa: E402
 from hub.lock import LOCK_FILE, LOG_FILE, read_lock_pid, write_lock_pid  # noqa: E402
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -68,12 +68,52 @@ class TestRemoveLockFile:
         lock_path.write_text("12345", encoding="utf-8")
         monkeypatch.setattr(hub_lock, "LOCK_FILE", lock_path)
         monkeypatch.setattr("hub.cli.LOCK_FILE", lock_path)
-        _remove_lock_file()
+        _remove_lock_file(12345)
         assert not lock_path.exists()
 
     def test_is_silent_when_file_missing(self, tmp_path, monkeypatch):
         monkeypatch.setattr("hub.cli.LOCK_FILE", tmp_path / "no_such_file.lock")
-        _remove_lock_file()  # must not raise
+        monkeypatch.setattr(hub_lock, "LOCK_FILE", tmp_path / "no_such_file.lock")
+        _remove_lock_file(0)  # must not raise
+
+    def test_does_not_delete_when_new_daemon_owns_lock(self, tmp_path, monkeypatch):
+        """Race condition: new daemon already wrote its PID before _remove_lock_file runs."""
+        lock_path = tmp_path / "hub.lock"
+        lock_path.write_text("99999", encoding="utf-8")  # new daemon's PID
+        monkeypatch.setattr(hub_lock, "LOCK_FILE", lock_path)
+        monkeypatch.setattr("hub.cli.LOCK_FILE", lock_path)
+        _remove_lock_file(stopped_pid=12345)  # we stopped PID 12345
+        assert lock_path.exists()
+        assert lock_path.read_text(encoding="utf-8").strip() == "99999"
+
+
+# ── _find_orphan_daemon ───────────────────────────────────────────────────────
+
+
+class TestFindOrphanDaemon:
+    def _make_mock_proc(self, pid: int, cmdline: list[str]):
+        proc = MagicMock()
+        proc.info = {"pid": pid, "cmdline": cmdline}
+        return proc
+
+    def test_finds_hub_start_process(self):
+        mock_proc = self._make_mock_proc(27599, ["/usr/bin/python3", "/usr/bin/hybro-hub", "start"])
+        with patch("psutil.process_iter", return_value=[mock_proc]):
+            from hub.cli import _find_orphan_daemon
+            assert _find_orphan_daemon() == 27599
+
+    def test_finds_hub_start_with_flags(self):
+        mock_proc = self._make_mock_proc(27599, ["/usr/bin/python3", "/usr/bin/hybro-hub", "start", "--foreground"])
+        with patch("psutil.process_iter", return_value=[mock_proc]):
+            from hub.cli import _find_orphan_daemon
+            assert _find_orphan_daemon() == 27599
+
+    def test_ignores_agent_subprocesses(self):
+        """hybro-hub agent start <adapter> must not be treated as an orphan daemon."""
+        mock_proc = self._make_mock_proc(6053, ["/usr/bin/python3", "/usr/bin/hybro-hub", "agent", "start", "openclaw", "--port", "10020"])
+        with patch("psutil.process_iter", return_value=[mock_proc]):
+            from hub.cli import _find_orphan_daemon
+            assert _find_orphan_daemon() is None
 
 
 # ── Instance lock (lock.py) ────────────────────────────────────────────────────
@@ -455,7 +495,7 @@ class TestStopGracefulShutdown:
             result = runner.invoke(main, ["stop"])
 
         mock_proc.send_signal.assert_called_once_with(signal.SIGTERM)
-        mock_rm.assert_called_once()
+        mock_rm.assert_called_once_with(42)
         assert "stopped" in result.output.lower()
         assert result.exit_code == 0
 
@@ -470,7 +510,7 @@ class TestStopGracefulShutdown:
             result = runner.invoke(main, ["stop"])
 
         mock_proc.kill.assert_called_once()
-        mock_rm.assert_called_once()
+        mock_rm.assert_called_once_with(42)
         assert "killed" in result.output.lower() or "force" in result.output.lower()
 
     def test_kill_tolerates_process_already_gone(self, runner):
@@ -589,6 +629,25 @@ class TestStatusLocalDaemon:
         assert result.exit_code == 0
         assert "stopped" in result.output.lower()
         assert "stale" in result.output.lower()
+
+    def test_status_warns_when_lock_missing_but_process_running(self, runner, monkeypatch):
+        """When hub.lock is absent but a hybro-hub process exists, show a repair hint."""
+        monkeypatch.setattr("hub.cli.LOG_FILE", Path("/tmp/hub.log"))
+        relay = MagicMock()
+        relay.get_status = AsyncMock(return_value={"hubs": []})
+        relay.close = AsyncMock()
+
+        with patch("hub.cli.read_lock_pid", return_value=None), \
+             patch("hub.cli._find_orphan_daemon", return_value=27599), \
+             patch("hub.cli.load_config", return_value=_mock_config()), \
+             patch("hub.agent_registry.AgentRegistry", return_value=_mock_registry()), \
+             patch("hub.cli.RelayClient", return_value=relay):
+            result = runner.invoke(main, ["status"])
+
+        assert result.exit_code == 0
+        assert "stopped" in result.output.lower()
+        assert "warning" in result.output.lower()
+        assert "27599" in result.output
 
 
 class TestStatusCloudRelay:

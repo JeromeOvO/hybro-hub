@@ -29,12 +29,50 @@ _STOP_TIMEOUT = 10  # seconds to wait for graceful shutdown before SIGKILL
 _ENV_DAEMON_CHILD = "HYBRO_HUB_DAEMON_CHILD"  # set to "1" in the detached child
 
 
-def _remove_lock_file() -> None:
-    """Delete the lock file after a clean stop. Silent no-op if already gone."""
+def _remove_lock_file(stopped_pid: int) -> None:
+    """Delete the lock file only if it still records stopped_pid.
+
+    Guards against deleting a freshly-started daemon's lock entry when stop()
+    races with a daemon restart: if the new daemon already wrote its PID to the
+    file, we leave it alone.
+    """
+    current_pid = read_lock_pid()
+    if current_pid != stopped_pid:
+        return
     try:
         LOCK_FILE.unlink()
     except FileNotFoundError:
         pass
+
+
+def _find_orphan_daemon() -> int | None:
+    """Scan running processes for a hybro-hub daemon with no lock file.
+
+    Returns the PID of the first matching process, or None.
+    Used by `status` to surface a repair hint when hub.lock is missing.
+
+    Matches only the hub daemon (`hybro-hub start [flags]`), not agent
+    subprocesses (`hybro-hub agent start ...`) which share the same binary.
+    """
+    import psutil
+
+    try:
+        for proc in psutil.process_iter(["pid", "cmdline"]):
+            try:
+                cmdline = proc.info["cmdline"] or []
+                for i, part in enumerate(cmdline):
+                    if "hybro-hub" in part.lower() or part.lower() == "hub":
+                        # Daemon: hybro-hub start [flags]
+                        # Agent:  hybro-hub agent start ...
+                        # Only match if the next argument is exactly "start".
+                        if i + 1 < len(cmdline) and cmdline[i + 1] == "start":
+                            return proc.info["pid"]
+                        break
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+    except Exception:
+        pass
+    return None
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -273,7 +311,7 @@ def stop() -> None:
         proc = psutil.Process(pid)
     except psutil.NoSuchProcess:
         click.echo(f"Hub daemon is not running (stale PID {pid} — cleaning up).")
-        _remove_lock_file()
+        _remove_lock_file(pid)
         sys.exit(0)
 
     # Guard against stale PID reuse: verify the process looks like hybro-hub.
@@ -282,7 +320,7 @@ def stop() -> None:
         is_hub = any("hybro" in part.lower() or "hub" in part.lower() for part in cmdline)
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         click.echo(f"Hub daemon is not running (stale PID {pid} — cleaning up).")
-        _remove_lock_file()
+        _remove_lock_file(pid)
         sys.exit(0)
 
     if not is_hub:
@@ -304,7 +342,7 @@ def stop() -> None:
     )
 
     if stopped:
-        _remove_lock_file()
+        _remove_lock_file(pid)
         click.echo("Hub daemon stopped.")
         return
 
@@ -314,7 +352,7 @@ def stop() -> None:
         proc.kill()
     except psutil.NoSuchProcess:
         pass
-    _remove_lock_file()
+    _remove_lock_file(pid)
     click.echo("Hub daemon killed.")
 
 
@@ -347,6 +385,9 @@ def status(ctx: click.Context) -> None:
         click.echo("  ✗  Local daemon   Stopped")
         if pid is not None:
             click.echo(f"     (stale PID {pid} — daemon may have crashed)")
+        elif (orphan_pid := _find_orphan_daemon()) is not None:
+            click.echo(f"     (warning: process PID {orphan_pid} looks like hybro-hub but {LOCK_FILE.name} is missing)")
+            click.echo(f"     Fix: echo {orphan_pid} > {LOCK_FILE}")
 
     click.echo("")
 
