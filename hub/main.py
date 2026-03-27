@@ -80,8 +80,8 @@ class HubDaemon:
     async def _startup(self) -> None:
         logger.info("Starting hub daemon (hub_id=%s)", self.config.hub_id)
 
-        # Initialise the disk-backed publish queue before registering so that
-        # any failures during startup can also fall back to the queue.
+        # Initialise the disk-backed publish queue first so that any publish
+        # failures during startup (registration, sync) can fall back to the queue.
         if self.config.publish_queue.enabled:
             queue_path = HYBRO_DIR / "data" / "publish_queue.db"
             self.relay.init_queue(queue_path, self.config.publish_queue)
@@ -101,6 +101,19 @@ class HubDaemon:
                 self._startup_drain_task.add_done_callback(
                     lambda t: t.exception() if not t.cancelled() else None
                 )
+
+        # Discover local agents BEFORE registering with the relay.
+        # Registering first opens the message channel immediately, but the
+        # in-memory registry is still empty at that point — any message the
+        # cloud routes during the discovery window hits "agent not found".
+        # By discovering and syncing first, the hub only announces itself
+        # once it is fully ready to serve traffic (ready-before-register).
+        agents = await self.registry.discover()
+        if not agents:
+            logger.warning(
+                "No local agents found. Start an A2A agent and it will be "
+                "discovered automatically."
+            )
 
         # Register with relay
         try:
@@ -124,14 +137,6 @@ class HubDaemon:
                 self.config.cloud.gateway_url, exc,
             )
             raise SystemExit(1)
-
-        # Discover local agents
-        agents = await self.registry.discover()
-        if not agents:
-            logger.warning(
-                "No local agents found. Start an A2A agent and it will be "
-                "discovered automatically."
-            )
 
         # Sync agents to cloud
         await self._sync_agents()
