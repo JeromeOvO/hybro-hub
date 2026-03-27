@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.10] - 2026-03-26
+
+### Added
+
+- `agent start --config <file>`: load any adapter from a YAML config file; supports auto-discovery of `hybro-agent.yaml` / `.hybro-agent.yaml` in the current directory
+- `agent_id` included in `agent_response` SSE events from the dispatcher
+
+### Changed
+
+- Hub startup reordered: agent discovery and sync now complete before relay registration, eliminating the "agent no longer available" race window on restart
+- `agent start`: `adapter_type` argument is now optional (required only when not using `--config`)
+- CLI `--port` override now detected via `ParameterSource.COMMANDLINE` instead of a hardcoded default comparison
+
+### Fixed
+
+- Agent card `name` field now reflects the value set in YAML config or `--name`; was incorrectly stripped before reaching the adapter constructor
+- `TypeError` when YAML config included a `port` key: hub-level key `port` is now stripped before passing config to `load_adapter()`
+- Frontend renders agent responses without `agent_id`; falls back to `agent_name` or `'Agent'` instead of silently dropping the message
+
 ## [0.1.9] - 2026-03-25
 
 ### Added
