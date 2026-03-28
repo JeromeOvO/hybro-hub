@@ -30,19 +30,54 @@ _ENV_DAEMON_CHILD = "HYBRO_HUB_DAEMON_CHILD"  # set to "1" in the detached child
 
 
 def _remove_lock_file(stopped_pid: int) -> None:
-    """Delete the lock file only if it still records stopped_pid.
+    """Delete the lock file only when no live daemon holds it and its PID matches stopped_pid.
 
-    Guards against deleting a freshly-started daemon's lock entry when stop()
-    races with a daemon restart: if the new daemon already wrote its PID to the
-    file, we leave it alone.
+    Two-layer guard against the restart race:
+
+    1. flock check: attempt LOCK_EX | LOCK_NB on the file. If that fails with
+       OSError (EWOULDBLOCK), a live daemon holds LOCK_EX — leave the file alone.
+       This closes the window between acquire_instance_lock() (flock acquired,
+       line ~256) and write_lock_pid() (PID written, line ~286) where the file
+       still holds the old PID but the new daemon already owns the flock.
+
+    2. PID check: only unlink if the file still records stopped_pid. Belt-and-
+       suspenders for the case where the flock race resolved after the PID was
+       written.
     """
-    current_pid = read_lock_pid()
-    if current_pid != stopped_pid:
-        return
     try:
-        LOCK_FILE.unlink()
+        fd = os.open(str(LOCK_FILE), os.O_RDWR)
     except FileNotFoundError:
-        pass
+        return
+
+    try:
+        try:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except ImportError:
+            # Windows: fcntl unavailable; fall back to PID-only check.
+            # msvcrt locks are not inherited across CreateProcess, so the
+            # flock race window does not exist on Windows.
+            current_pid = read_lock_pid()
+            if current_pid == stopped_pid:
+                try:
+                    LOCK_FILE.unlink()
+                except FileNotFoundError:
+                    pass
+            return
+        except OSError:
+            # EWOULDBLOCK: a live daemon holds LOCK_EX. Leave the file alone.
+            return
+
+        # We hold LOCK_EX — no other daemon is running. Safe to inspect and
+        # conditionally delete.
+        current_pid = read_lock_pid()
+        if current_pid == stopped_pid:
+            try:
+                LOCK_FILE.unlink()
+            except FileNotFoundError:
+                pass
+    finally:
+        os.close(fd)
 
 
 def _find_orphan_daemon() -> int | None:
@@ -387,7 +422,7 @@ def status(ctx: click.Context) -> None:
             click.echo(f"     (stale PID {pid} — daemon may have crashed)")
         elif (orphan_pid := _find_orphan_daemon()) is not None:
             click.echo(f"     (warning: process PID {orphan_pid} looks like hybro-hub but {LOCK_FILE.name} is missing)")
-            click.echo(f"     Fix: echo {orphan_pid} > {LOCK_FILE}")
+            click.echo(f"     Fix: kill {orphan_pid} && hybro-hub start")
 
     click.echo("")
 

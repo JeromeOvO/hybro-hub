@@ -68,21 +68,62 @@ class TestRemoveLockFile:
         lock_path.write_text("12345", encoding="utf-8")
         monkeypatch.setattr(hub_lock, "LOCK_FILE", lock_path)
         monkeypatch.setattr("hub.cli.LOCK_FILE", lock_path)
-        _remove_lock_file(12345)
+        import fcntl
+        with patch.object(fcntl, "flock"):  # flock succeeds (no-op)
+            _remove_lock_file(12345)
         assert not lock_path.exists()
 
     def test_is_silent_when_file_missing(self, tmp_path, monkeypatch):
         monkeypatch.setattr("hub.cli.LOCK_FILE", tmp_path / "no_such_file.lock")
         monkeypatch.setattr(hub_lock, "LOCK_FILE", tmp_path / "no_such_file.lock")
-        _remove_lock_file(0)  # must not raise
+        _remove_lock_file(0)  # os.open raises FileNotFoundError — must not raise
 
     def test_does_not_delete_when_new_daemon_owns_lock(self, tmp_path, monkeypatch):
-        """Race condition: new daemon already wrote its PID before _remove_lock_file runs."""
+        """Race condition: new daemon holds flock but already wrote its PID."""
         lock_path = tmp_path / "hub.lock"
         lock_path.write_text("99999", encoding="utf-8")  # new daemon's PID
         monkeypatch.setattr(hub_lock, "LOCK_FILE", lock_path)
         monkeypatch.setattr("hub.cli.LOCK_FILE", lock_path)
-        _remove_lock_file(stopped_pid=12345)  # we stopped PID 12345
+        import fcntl
+        with patch.object(fcntl, "flock"):  # flock succeeds; PID check is the guard
+            _remove_lock_file(stopped_pid=12345)  # we stopped PID 12345
+        assert lock_path.exists()
+        assert lock_path.read_text(encoding="utf-8").strip() == "99999"
+
+    def test_does_not_delete_when_flock_fails(self, tmp_path, monkeypatch):
+        """New daemon holds LOCK_EX — we cannot acquire; must leave the file alone.
+
+        This is the core of the flock-before-unlink fix: covers the race window
+        between acquire_instance_lock() and write_lock_pid() where the file still
+        holds the old PID but the new daemon already owns the flock.
+        """
+        lock_path = tmp_path / "hub.lock"
+        lock_path.write_text("12345", encoding="utf-8")  # old PID still in file
+        monkeypatch.setattr(hub_lock, "LOCK_FILE", lock_path)
+        monkeypatch.setattr("hub.cli.LOCK_FILE", lock_path)
+        import fcntl
+        with patch.object(fcntl, "flock", side_effect=OSError("would block")):
+            _remove_lock_file(stopped_pid=12345)
+        assert lock_path.exists(), "Must not delete when new daemon holds the flock"
+
+    def test_windows_pid_only_fallback_deletes(self, tmp_path, monkeypatch):
+        """Windows path: no fcntl, falls back to PID-only check and deletes."""
+        lock_path = tmp_path / "hub.lock"
+        lock_path.write_text("12345", encoding="utf-8")
+        monkeypatch.setattr(hub_lock, "LOCK_FILE", lock_path)
+        monkeypatch.setattr("hub.cli.LOCK_FILE", lock_path)
+        with patch.dict(sys.modules, {"fcntl": None}):
+            _remove_lock_file(stopped_pid=12345)
+        assert not lock_path.exists()
+
+    def test_windows_pid_only_fallback_no_delete_on_mismatch(self, tmp_path, monkeypatch):
+        """Windows path: PID mismatch → file survives."""
+        lock_path = tmp_path / "hub.lock"
+        lock_path.write_text("99999", encoding="utf-8")  # new daemon's PID
+        monkeypatch.setattr(hub_lock, "LOCK_FILE", lock_path)
+        monkeypatch.setattr("hub.cli.LOCK_FILE", lock_path)
+        with patch.dict(sys.modules, {"fcntl": None}):
+            _remove_lock_file(stopped_pid=12345)
         assert lock_path.exists()
         assert lock_path.read_text(encoding="utf-8").strip() == "99999"
 
@@ -648,6 +689,10 @@ class TestStatusLocalDaemon:
         assert "stopped" in result.output.lower()
         assert "warning" in result.output.lower()
         assert "27599" in result.output
+        # Repair hint must be the safe kill+restart form, not the unsafe echo form.
+        assert "kill 27599" in result.output
+        assert "hybro-hub start" in result.output
+        assert "echo" not in result.output
 
 
 class TestStatusCloudRelay:
