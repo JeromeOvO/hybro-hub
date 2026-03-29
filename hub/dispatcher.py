@@ -270,8 +270,15 @@ class Dispatcher:
         return result
 
     async def _dispatch_sync(self, agent: LocalAgent, message_dict: dict) -> DispatchResult:
-        """Send a synchronous A2A message/send request."""
-        request_body = self._build_jsonrpc(message_dict, method="message/send")
+        """Send a synchronous A2A message/send request with blocking=True.
+
+        Non-streaming agents may take a long time to respond.  Sending
+        ``blocking=True`` asks the agent to hold the HTTP connection and return
+        the result directly, avoiding a push-notification round-trip that would
+        require a reachable webhook URL.
+        """
+        configuration: dict[str, Any] = {"blocking": True}
+        request_body = self._build_jsonrpc(message_dict, method="message/send", configuration=configuration)
         client = await self._get_client()
 
         resp = await client.post(
@@ -379,15 +386,28 @@ class Dispatcher:
     # ──── JSON-RPC construction ────
 
     @staticmethod
-    def _build_jsonrpc(message_dict: dict, method: str) -> dict:
-        """Build a JSON-RPC 2.0 envelope for an A2A message."""
+    def _build_jsonrpc(
+        message_dict: dict,
+        method: str,
+        configuration: dict[str, Any] | None = None,
+    ) -> dict:
+        """Build a JSON-RPC 2.0 envelope for an A2A message.
+
+        Args:
+            message_dict: The A2A Message payload.
+            method: JSON-RPC method name (e.g. ``"message/send"``).
+            configuration: Optional ``MessageSendConfiguration`` fields to
+                include in ``params.configuration``.  Streaming calls omit
+                this; sync calls pass ``{"blocking": True}``.
+        """
+        params: dict[str, Any] = {"message": message_dict}
+        if configuration:
+            params["configuration"] = configuration
         return {
             "jsonrpc": "2.0",
             "id": uuid4().hex,
             "method": method,
-            "params": {
-                "message": message_dict,
-            },
+            "params": params,
         }
 
     # ──── Response extraction ────
