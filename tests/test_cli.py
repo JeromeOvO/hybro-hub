@@ -316,7 +316,7 @@ class TestUpdateCommand:
     def test_dry_run_shows_upgrades(self):
         with (
             patch("hub.cli._installed_version", side_effect=lambda p: {"hybro-hub": "0.1.16", "a2a-adapter": "0.2.5", "a2a-sdk": "0.3.25"}.get(p)),
-            patch("hub.cli._query_pypi_versions", return_value={"hybro-hub": "0.1.18", "a2a-adapter": "0.2.7", "a2a-sdk": "0.3.25"}),
+            patch("hub.cli._query_pypi_versions", return_value={"hybro-hub": "0.1.18", "a2a-adapter": "0.2.9", "a2a-sdk": "1.0.1"}),
         ):
             result = self._run(["--dry-run"])
         assert result.exit_code == 0
@@ -325,8 +325,8 @@ class TestUpdateCommand:
 
     def test_already_up_to_date(self):
         with (
-            patch("hub.cli._installed_version", side_effect=lambda p: {"hybro-hub": "0.1.18", "a2a-adapter": "0.2.7", "a2a-sdk": "0.3.25"}.get(p)),
-            patch("hub.cli._query_pypi_versions", return_value={"hybro-hub": "0.1.18", "a2a-adapter": "0.2.7", "a2a-sdk": "0.3.25"}),
+            patch("hub.cli._installed_version", side_effect=lambda p: {"hybro-hub": "0.1.18", "a2a-adapter": "0.2.9", "a2a-sdk": "1.0.1"}.get(p)),
+            patch("hub.cli._query_pypi_versions", return_value={"hybro-hub": "0.1.18", "a2a-adapter": "0.2.9", "a2a-sdk": "1.0.1"}),
         ):
             result = self._run()
         assert result.exit_code == 0

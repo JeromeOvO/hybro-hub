@@ -28,6 +28,7 @@ from hub.a2a_compat import (
 
 V03_CARD = {
     "name": "Legacy Agent",
+    "description": "A legacy v0.3 agent",
     "url": "http://localhost:9001/",
     "version": "1.0.0",
     "capabilities": {"streaming": True},
@@ -152,6 +153,35 @@ class TestValidateAgentCard:
         result = validate_agent_card({"name": "foo", "error": "bar", "version": "1.0"})
         assert result is None
 
+    def test_name_plus_empty_capabilities_rejected(self):
+        result = validate_agent_card({"name": "x", "capabilities": {}})
+        assert result is None
+
+    def test_name_plus_url_only_rejected(self):
+        result = validate_agent_card({"name": "x", "url": "http://localhost:1"})
+        assert result is None
+
+    def test_name_plus_single_shallow_key_rejected(self):
+        result = validate_agent_card({"name": "x", "skills": []})
+        assert result is None
+
+    def test_fake_card_missing_required_v03_fields_rejected(self):
+        result = validate_agent_card({
+            "name": "x", "description": "y", "version": "1.0",
+            "capabilities": {"streaming": True}, "url": "http://localhost:1",
+        })
+        assert result is None
+
+    def test_sparse_v03_card_accepted(self):
+        sparse = {
+            "name": "Sparse", "description": "", "version": "1.0.0",
+            "url": "http://localhost:9001/",
+            "capabilities": {}, "skills": [],
+            "defaultInputModes": [], "defaultOutputModes": [],
+        }
+        result = validate_agent_card(sparse)
+        assert result is not None
+
 
 # ============================================================================
 # Task 3: Interface Selection
@@ -253,6 +283,24 @@ class TestSelectInterface:
         with pytest.raises(ValueError, match="No usable JSON-RPC interface"):
             select_interface(card)
 
+    def test_raises_on_non_list_supported_interfaces(self):
+        card = {"name": "Bad", "supportedInterfaces": {"oops": 1}}
+        with pytest.raises(ValueError, match="must be a list"):
+            select_interface(card)
+
+    def test_skips_non_dict_items_in_supported_interfaces(self):
+        card = {
+            "name": "Mixed",
+            "supportedInterfaces": [
+                "not-a-dict",
+                42,
+                {"protocolBinding": "JSONRPC", "protocolVersion": "0.3", "url": "http://localhost:1/a2a"},
+            ],
+        }
+        ri = select_interface(card)
+        assert ri.protocol_version == "0.3"
+        assert ri.url == "http://localhost:1/a2a"
+
 
 class TestSelectFallbackInterface:
     def test_v03_primary_returns_none(self):
@@ -272,6 +320,21 @@ class TestSelectFallbackInterface:
         assert fb is not None
         assert fb.protocol_version == "0.3"
         assert fb.url == "http://localhost:9002/a2a"
+
+    def test_skips_non_dict_items_in_supported_interfaces(self):
+        card = {
+            "name": "Dirty",
+            "supportedInterfaces": [
+                "bad",
+                {"protocolBinding": "JSONRPC", "protocolVersion": "0.3", "url": "http://localhost:1/v03"},
+                {"protocolBinding": "JSONRPC", "protocolVersion": "1.0", "url": "http://localhost:1/v1"},
+            ],
+        }
+        primary = ResolvedInterface(binding="JSONRPC", protocol_version="1.0", url="http://localhost:1/v1")
+        fb = select_fallback_interface(card, primary)
+        assert fb is not None
+        assert fb.protocol_version == "0.3"
+        assert fb.url == "http://localhost:1/v03"
 
 
 # ============================================================================

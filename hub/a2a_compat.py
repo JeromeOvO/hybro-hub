@@ -40,31 +40,31 @@ CANONICAL_TERMINAL_STATES: set[str] = {
 }
 
 
-_AGENT_CARD_STRUCTURAL_KEYS: frozenset[str] = frozenset({
-    "url", "supportedInterfaces", "skills", "capabilities",
-    "defaultInputModes", "defaultOutputModes",
-})
-
-
-def _looks_like_agent_card(card_data: dict) -> bool:
-    """Pre-check: card must have name AND at least one A2A-structural key."""
-    if not card_data.get("name"):
-        return False
-    return bool(_AGENT_CARD_STRUCTURAL_KEYS & card_data.keys())
-
-
 def validate_agent_card(card_data: dict) -> dict | None:
-    """Validate an agent card, trying v1.0 first, then falling back to v0.3.
+    """Validate an agent card, trying v0.3 (strict) first, then v1.0.
 
     Returns the card dict if valid, None if neither schema accepts it.
-    Both parsers tolerate unknown/vendor fields for forward compatibility.
-    A structural pre-check rejects dicts that have a name but no other
-    A2A-specific keys (e.g. error JSON from unrelated servers).
+    v0.3 uses Pydantic model_validate which enforces required fields.
+    v1.0 only accepts cards that have supportedInterfaces (the v1.0
+    hallmark); protobuf ParseDict is too lenient on its own.
     """
-    if not _looks_like_agent_card(card_data):
+    if not isinstance(card_data, dict) or not card_data.get("name"):
         return None
 
-    # Try v1.0 (protobuf ParseDict)
+    # Try v0.3 (Pydantic — strict, enforces required fields)
+    try:
+        from a2a.compat.v0_3.types import AgentCard as V03AgentCard
+
+        V03AgentCard.model_validate(card_data)
+        return card_data
+    except Exception:
+        pass
+
+    # Try v1.0 — require supportedInterfaces (v1.0's distinguishing key)
+    ifaces = card_data.get("supportedInterfaces")
+    if not isinstance(ifaces, list) or not ifaces:
+        return None
+
     try:
         from google.protobuf.json_format import ParseDict
         from a2a.types import AgentCard
@@ -72,15 +72,6 @@ def validate_agent_card(card_data: dict) -> dict | None:
         parsed = ParseDict(card_data, AgentCard(), ignore_unknown_fields=True)
         if parsed.name:
             return card_data
-    except Exception:
-        pass
-
-    # Fall back to v0.3 (Pydantic model_validate)
-    try:
-        from a2a.compat.v0_3.types import AgentCard as V03AgentCard
-
-        V03AgentCard.model_validate(card_data)
-        return card_data
     except Exception:
         pass
 
@@ -107,8 +98,14 @@ def select_interface(card: dict) -> ResolvedInterface:
     interfaces = card.get("supportedInterfaces", None)
 
     if interfaces is not None:
+        if not isinstance(interfaces, list):
+            raise ValueError(
+                f"supportedInterfaces must be a list, got {type(interfaces).__name__}"
+            )
         jsonrpc: list[ResolvedInterface] = []
         for iface in interfaces:
+            if not isinstance(iface, dict):
+                continue
             if iface.get("protocolBinding", "") != "JSONRPC":
                 continue
             url = iface.get("url", "")
@@ -151,6 +148,8 @@ def select_fallback_interface(
         return None
 
     for iface in card.get("supportedInterfaces", []):
+        if not isinstance(iface, dict):
+            continue
         if iface.get("protocolBinding", "") != "JSONRPC":
             continue
         pv = iface.get("protocolVersion", "0.3")

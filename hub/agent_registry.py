@@ -166,8 +166,11 @@ class AgentRegistry:
             existing.agent_card = card
             existing.healthy = True
             existing.name = agent_name
+            existing.description = card.get("description", "")
+            existing.capabilities = _extract_capabilities(card)
             existing.interface = interface
             existing.fallback_interface = fallback
+            self._failure_counts.pop(existing.local_agent_id, None)
             return existing
 
         local_id = hashlib.sha256(url.encode()).hexdigest()[:12]
@@ -201,8 +204,32 @@ class AgentRegistry:
         for agent in list(self._agents.values()):
             card = await self._fetch_agent_card(agent.url)
             if card is not None:
+                try:
+                    new_iface = a2a_compat.select_interface(card)
+                except ValueError:
+                    logger.warning(
+                        "Agent %s returned card with no usable interface — marking unhealthy",
+                        agent.name,
+                    )
+                    agent.healthy = False
+                    count = self._failure_counts.get(agent.local_agent_id, 0) + 1
+                    self._failure_counts[agent.local_agent_id] = count
+                    if count >= self.HEALTH_FAILURE_THRESHOLD:
+                        logger.warning(
+                            "Agent %s failed %d consecutive health checks — removing",
+                            agent.name, count,
+                        )
+                        del self._agents[agent.local_agent_id]
+                        self._failure_counts.pop(agent.local_agent_id, None)
+                    continue
                 agent.healthy = True
                 agent.agent_card = card
+                agent.description = card.get("description", "")
+                agent.capabilities = _extract_capabilities(card)
+                agent.interface = new_iface
+                agent.fallback_interface = a2a_compat.select_fallback_interface(
+                    card, new_iface,
+                )
                 self._failure_counts.pop(agent.local_agent_id, None)
             else:
                 agent.healthy = False

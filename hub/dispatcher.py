@@ -281,8 +281,30 @@ class Dispatcher:
     # ──── Cancel ────
 
     async def cancel_task(self, agent: LocalAgent, task_id: str) -> None:
-        """Best-effort cancellation of an in-flight task on a local agent."""
+        """Best-effort cancellation of an in-flight task on a local agent.
+
+        Uses _check_response for JSON-RPC error handling and retries on
+        fallback interface if the primary returns a version-mismatch error.
+        """
         iface = agent.interface
+        try:
+            await self._do_cancel_task(agent, task_id, iface)
+        except A2AVersionFallbackError:
+            fb = agent.fallback_interface
+            if fb and fb != iface:
+                logger.info(
+                    "CancelTask on %s failed with version error — retrying on fallback %s",
+                    iface.url, fb.url,
+                )
+                await self._do_cancel_task(agent, task_id, fb)
+            else:
+                raise
+
+    async def _do_cancel_task(
+        self, agent: LocalAgent, task_id: str,
+        iface: ResolvedInterface,
+    ) -> None:
+        """Low-level cancel on a specific interface."""
         version = iface.protocol_version
         method = a2a_compat.get_method_name("cancel_task", version)
         headers = {"Content-Type": "application/json", **a2a_compat.get_headers(version)}
@@ -294,6 +316,7 @@ class Dispatcher:
             "params": {"id": task_id},
         }
         resp = await client.post(iface.url, json=body, headers=headers)
+        self._check_response(resp)
         logger.info("Cancel response from %s: %d", agent.name, resp.status_code)
 
     # ──── Sync dispatch (message/send) ────

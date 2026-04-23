@@ -505,6 +505,8 @@ class TestCancelTask:
         dispatcher = Dispatcher()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
+        mock_resp.is_success = True
+        mock_resp.json.return_value = {"jsonrpc": "2.0", "id": "1", "result": {}}
         mock_client = AsyncMock()
         mock_client.is_closed = False
         mock_client.post = AsyncMock(return_value=mock_resp)
@@ -527,6 +529,62 @@ class TestCancelTask:
         dispatcher._client = mock_client
 
         with pytest.raises(Exception, match="network error"):
+            await dispatcher.cancel_task(agent, "task-xyz")
+
+    @pytest.mark.asyncio
+    async def test_cancel_fallback_on_version_error(self):
+        from hub.a2a_compat import ResolvedInterface
+
+        agent = LocalAgent(
+            local_agent_id="test_cancel_fb",
+            name="Cancel Fallback Agent",
+            url="http://localhost:9001",
+            agent_card={"capabilities": {"streaming": False}},
+            interface=ResolvedInterface(binding="JSONRPC", protocol_version="1.0", url="http://localhost:9001/v1"),
+            fallback_interface=ResolvedInterface(binding="JSONRPC", protocol_version="0.3", url="http://localhost:9001/v03"),
+        )
+
+        v10_resp = MagicMock()
+        v10_resp.is_success = True
+        v10_resp.json.return_value = {
+            "jsonrpc": "2.0", "id": "1",
+            "error": {"code": -32601, "message": "Method not found"},
+        }
+        v03_resp = MagicMock()
+        v03_resp.is_success = True
+        v03_resp.json.return_value = {"jsonrpc": "2.0", "id": "2", "result": {}}
+
+        dispatcher = Dispatcher()
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client.post = AsyncMock(side_effect=[v10_resp, v03_resp])
+        dispatcher._client = mock_client
+
+        await dispatcher.cancel_task(agent, "task-42")
+
+        assert mock_client.post.call_count == 2
+        first_call = mock_client.post.call_args_list[0]
+        assert first_call[0][0] == "http://localhost:9001/v1"
+        assert first_call[1]["json"]["method"] == "CancelTask"
+        second_call = mock_client.post.call_args_list[1]
+        assert second_call[0][0] == "http://localhost:9001/v03"
+        assert second_call[1]["json"]["method"] == "tasks/cancel"
+
+    @pytest.mark.asyncio
+    async def test_cancel_check_response_raises_non_fallback_error(self, agent):
+        dispatcher = Dispatcher()
+        mock_resp = MagicMock()
+        mock_resp.is_success = True
+        mock_resp.json.return_value = {
+            "jsonrpc": "2.0", "id": "1",
+            "error": {"code": -32600, "message": "Invalid Request"},
+        }
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        dispatcher._client = mock_client
+
+        with pytest.raises(RuntimeError, match="Invalid Request"):
             await dispatcher.cancel_task(agent, "task-xyz")
 
 
@@ -666,6 +724,14 @@ class TestDispatchStreaming:
         mock_client = AsyncMock()
         mock_client.is_closed = False
         mock_client._canned_events = canned
+
+        refetch_resp = MagicMock()
+        refetch_resp.is_success = True
+        refetch_resp.json.return_value = {
+            "jsonrpc": "2.0", "id": "1",
+            "result": {"status": {"state": "completed", "message": {"role": "agent", "parts": []}}},
+        }
+        mock_client.post.return_value = refetch_resp
         dispatcher._client = mock_client
 
         import hub.dispatcher as dispatcher_mod
@@ -866,6 +932,8 @@ class TestV10MethodRouting:
         dispatcher = Dispatcher()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
+        mock_resp.is_success = True
+        mock_resp.json.return_value = {"jsonrpc": "2.0", "id": "1", "result": {}}
         mock_client = AsyncMock()
         mock_client.is_closed = False
         mock_client.post = AsyncMock(return_value=mock_resp)
@@ -1237,6 +1305,14 @@ class TestV10Streaming:
             dispatcher = Dispatcher()
             mock_client = AsyncMock()
             mock_client.is_closed = False
+
+            refetch_resp = MagicMock()
+            refetch_resp.is_success = True
+            refetch_resp.json.return_value = {
+                "jsonrpc": "2.0", "id": "1",
+                "result": {"status": {"state": "completed", "message": {"role": "agent", "parts": []}}},
+            }
+            mock_client.post.return_value = refetch_resp
             dispatcher._client = mock_client
 
             batches = []
