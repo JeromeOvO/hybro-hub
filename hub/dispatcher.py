@@ -303,8 +303,32 @@ class Dispatcher:
         timeout: float | None = None,
         interface: ResolvedInterface | None = None,
     ) -> dict:
-        """Fetch a task by ID via tasks/get JSON-RPC call."""
+        """Fetch a task by ID via tasks/get JSON-RPC call.
+
+        If the primary interface returns a fallback-eligible error AND the
+        agent has a fallback_interface, retries GetTask on the fallback
+        rather than bubbling up A2AVersionFallbackError (which would cause
+        dispatch() to resend the entire message).
+        """
         iface = interface or agent.interface
+        try:
+            return await self._do_fetch_task(agent, task_id, iface, timeout)
+        except A2AVersionFallbackError:
+            fb = agent.fallback_interface
+            if fb and fb != iface:
+                logger.info(
+                    "GetTask on %s failed with version error — retrying on fallback %s",
+                    iface.url, fb.url,
+                )
+                return await self._do_fetch_task(agent, task_id, fb, timeout)
+            raise
+
+    async def _do_fetch_task(
+        self, agent: LocalAgent, task_id: str,
+        iface: ResolvedInterface,
+        timeout: float | None = None,
+    ) -> dict:
+        """Low-level task fetch on a specific interface."""
         version = iface.protocol_version
         method = a2a_compat.get_method_name("get_task", version)
         headers = {"Content-Type": "application/json", **a2a_compat.get_headers(version)}
@@ -460,8 +484,12 @@ class Dispatcher:
                 if first_event:
                     first_event = False
                     err = a2a_compat.extract_jsonrpc_error(data)
-                    if err and err.code in a2a_compat.FALLBACK_ELIGIBLE_CODES:
-                        raise A2AVersionFallbackError(
+                    if err:
+                        if err.code in a2a_compat.FALLBACK_ELIGIBLE_CODES:
+                            raise A2AVersionFallbackError(
+                                f"JSON-RPC error {err.code}: {err.message}"
+                            )
+                        raise RuntimeError(
                             f"JSON-RPC error {err.code}: {err.message}"
                         )
 

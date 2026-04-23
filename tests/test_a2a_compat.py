@@ -143,6 +143,15 @@ class TestValidateAgentCard:
         result = validate_agent_card(card)
         assert result is not None
 
+    def test_name_only_dict_rejected(self):
+        """A dict with name but no A2A structural keys must be rejected."""
+        result = validate_agent_card({"name": "not-a-card"})
+        assert result is None
+
+    def test_name_plus_unrelated_keys_rejected(self):
+        result = validate_agent_card({"name": "foo", "error": "bar", "version": "1.0"})
+        assert result is None
+
 
 # ============================================================================
 # Task 3: Interface Selection

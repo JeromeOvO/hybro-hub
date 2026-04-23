@@ -40,14 +40,30 @@ CANONICAL_TERMINAL_STATES: set[str] = {
 }
 
 
+_AGENT_CARD_STRUCTURAL_KEYS: frozenset[str] = frozenset({
+    "url", "supportedInterfaces", "skills", "capabilities",
+    "defaultInputModes", "defaultOutputModes",
+})
+
+
+def _looks_like_agent_card(card_data: dict) -> bool:
+    """Pre-check: card must have name AND at least one A2A-structural key."""
+    if not card_data.get("name"):
+        return False
+    return bool(_AGENT_CARD_STRUCTURAL_KEYS & card_data.keys())
+
+
 def validate_agent_card(card_data: dict) -> dict | None:
     """Validate an agent card, trying v1.0 first, then falling back to v0.3.
 
     Returns the card dict if valid, None if neither schema accepts it.
     Both parsers tolerate unknown/vendor fields for forward compatibility.
-    Protobuf ParseDict accepts almost anything with ignore_unknown_fields,
-    so we also check that the parsed card has a non-empty name.
+    A structural pre-check rejects dicts that have a name but no other
+    A2A-specific keys (e.g. error JSON from unrelated servers).
     """
+    if not _looks_like_agent_card(card_data):
+        return None
+
     # Try v1.0 (protobuf ParseDict)
     try:
         from google.protobuf.json_format import ParseDict

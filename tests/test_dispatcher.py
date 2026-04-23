@@ -1254,3 +1254,109 @@ class TestV10Streaming:
         terminal = batches[-1]
         status = next(e for e in terminal if e["type"] == "processing_status")
         assert status["data"]["status"] != "failed"
+
+
+class TestStreamingNonFallbackError:
+    """Bug fix: non-fallback JSON-RPC error on first SSE event must surface as agent_error."""
+
+    @pytest.mark.asyncio
+    async def test_non_fallback_jsonrpc_error_surfaces_as_error(self, v10_streaming_agent):
+        canned = [
+            {"jsonrpc": "2.0", "id": "1", "error": {"code": -32600, "message": "Invalid Request"}},
+        ]
+
+        dispatcher = Dispatcher()
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client._canned_events = canned
+        dispatcher._client = mock_client
+
+        import hub.dispatcher as dispatcher_mod
+        original = dispatcher_mod.aconnect_sse
+        dispatcher_mod.aconnect_sse = _fake_aconnect_sse
+        try:
+            batches = []
+            async for batch in dispatcher.dispatch(
+                agent=v10_streaming_agent,
+                message_dict=SAMPLE_MESSAGE,
+                agent_message_id="am-stream-err",
+                user_message_id="um-stream-err",
+            ):
+                batches.append(batch)
+        finally:
+            dispatcher_mod.aconnect_sse = original
+
+        terminal = batches[-1]
+        assert any(e["type"] == "agent_error" for e in terminal)
+        assert any(e["data"]["status"] == "failed" for e in terminal if e["type"] == "processing_status")
+
+
+class TestFetchTaskLocalFallback:
+    """Bug fix: _fetch_task retries GetTask on fallback interface instead of bubbling."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_task_retries_on_fallback_interface(self, v10_agent_with_fallback):
+        agent = v10_agent_with_fallback
+        call_count = 0
+        urls_called = []
+
+        v10_error_resp = MagicMock()
+        v10_error_resp.status_code = 200
+        v10_error_resp.is_success = True
+        v10_error_resp.json.return_value = {
+            "jsonrpc": "2.0", "id": "1",
+            "error": {"code": -32601, "message": "Method not found"},
+        }
+
+        v03_success_resp = MagicMock()
+        v03_success_resp.status_code = 200
+        v03_success_resp.is_success = True
+        v03_success_resp.json.return_value = {
+            "jsonrpc": "2.0", "id": "2",
+            "result": {
+                "kind": "task", "id": "t-1",
+                "status": {"state": "completed",
+                           "message": {"role": "agent", "parts": [{"text": "ok"}]}},
+            },
+        }
+
+        async def fake_post(url, *, json, headers, **kwargs):
+            nonlocal call_count
+            urls_called.append(url)
+            call_count += 1
+            if call_count == 1:
+                return v10_error_resp
+            return v03_success_resp
+
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client.post = fake_post
+        dispatcher = Dispatcher()
+        dispatcher._client = mock_client
+
+        result = await dispatcher._fetch_task(agent, "t-1")
+
+        assert call_count == 2
+        assert urls_called[0] == "http://localhost:9001/v1"
+        assert urls_called[1] == "http://localhost:9001/v03"
+        assert result.get("status", {}).get("state") == "completed"
+
+    @pytest.mark.asyncio
+    async def test_fetch_task_no_fallback_bubbles(self, v10_agent):
+        """Without fallback_interface, A2AVersionFallbackError still raises."""
+        v10_error_resp = MagicMock()
+        v10_error_resp.status_code = 200
+        v10_error_resp.is_success = True
+        v10_error_resp.json.return_value = {
+            "jsonrpc": "2.0", "id": "1",
+            "error": {"code": -32601, "message": "Method not found"},
+        }
+
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client.post = AsyncMock(return_value=v10_error_resp)
+        dispatcher = Dispatcher()
+        dispatcher._client = mock_client
+
+        with pytest.raises(A2AVersionFallbackError):
+            await dispatcher._fetch_task(v10_agent, "t-1")
