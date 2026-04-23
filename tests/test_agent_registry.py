@@ -52,6 +52,35 @@ SAMPLE_CARD = {
     "defaultOutputModes": ["text"],
 }
 
+from hub.a2a_compat import ResolvedInterface
+
+
+V10_SAMPLE_CARD = {
+    "name": "Modern Agent",
+    "description": "A v1.0 agent",
+    "supportedInterfaces": [
+        {
+            "protocolBinding": "JSONRPC",
+            "protocolVersion": "1.0",
+            "url": "http://localhost:9001/a2a",
+        },
+    ],
+    "capabilities": {"streaming": True},
+    "skills": [{"id": "s1", "name": "Skill", "description": "A skill", "tags": ["chat"]}],
+}
+
+DUAL_MODE_SAMPLE_CARD = {
+    "name": "Dual Agent",
+    "description": "Speaks both protocols",
+    "url": "http://localhost:9001/",
+    "supportedInterfaces": [
+        {"protocolBinding": "JSONRPC", "protocolVersion": "1.0", "url": "http://localhost:9001/v1"},
+        {"protocolBinding": "JSONRPC", "protocolVersion": "0.3", "url": "http://localhost:9001/v03"},
+    ],
+    "capabilities": {"streaming": False},
+    "skills": [],
+}
+
 
 class TestDiscovery:
     @pytest.mark.asyncio
@@ -539,3 +568,63 @@ class TestScanRangeValidator:
     def test_start_greater_than_end(self):
         with pytest.raises(pydantic.ValidationError, match="start.*must be <= end"):
             self._make([9000, 8000])
+
+
+class TestV10Discovery:
+    @pytest.mark.asyncio
+    async def test_discover_v10_agent(self, config):
+        registry = AgentRegistry(config)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = V10_SAMPLE_CARD
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        registry._client = mock_client
+
+        agents = await registry.discover()
+        assert len(agents) == 1
+        agent = agents[0]
+        assert agent.interface.protocol_version == "1.0"
+        assert agent.interface.url == "http://localhost:9001/a2a"
+        assert agent.fallback_interface is not None
+        assert agent.fallback_interface.protocol_version == "0.3"
+        await registry.close()
+
+    @pytest.mark.asyncio
+    async def test_discover_v03_agent_has_v03_interface(self, config):
+        registry = AgentRegistry(config)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = SAMPLE_CARD
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        registry._client = mock_client
+
+        agents = await registry.discover()
+        assert len(agents) == 1
+        agent = agents[0]
+        assert agent.interface.protocol_version == "0.3"
+        assert agent.fallback_interface is None
+        await registry.close()
+
+    @pytest.mark.asyncio
+    async def test_discover_dual_mode_agent(self, config):
+        registry = AgentRegistry(config)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = DUAL_MODE_SAMPLE_CARD
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        registry._client = mock_client
+
+        agents = await registry.discover()
+        assert len(agents) == 1
+        agent = agents[0]
+        assert agent.interface.protocol_version == "1.0"
+        assert agent.interface.url == "http://localhost:9001/v1"
+        assert agent.fallback_interface is not None
+        assert agent.fallback_interface.url == "http://localhost:9001/v03"
+        await registry.close()

@@ -25,19 +25,18 @@ from dataclasses import dataclass, field
 from urllib.parse import urlparse, urlunparse
 
 import httpx
-from a2a.types import AgentCard
-from a2a.utils.constants import (
-    AGENT_CARD_WELL_KNOWN_PATH,
-    PREV_AGENT_CARD_WELL_KNOWN_PATH,
-)
+from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
 
+from . import a2a_compat
+from .a2a_compat import ResolvedInterface
 from .config import HubConfig
 
 logger = logging.getLogger(__name__)
 
+# Well-known agent card paths to probe during discovery
 AGENT_CARD_PATHS = [
     AGENT_CARD_WELL_KNOWN_PATH,       # /.well-known/agent-card.json
-    PREV_AGENT_CARD_WELL_KNOWN_PATH,  # /.well-known/agent.json
+    "/.well-known/agent.json",        # Legacy path for older agents
 ]
 DISCOVERY_TIMEOUT = 3
 
@@ -67,6 +66,16 @@ class LocalAgent:
     capabilities: list[str] = field(default_factory=list)
     agent_card: dict = field(default_factory=dict)
     healthy: bool = True
+    interface: ResolvedInterface | None = None
+    fallback_interface: ResolvedInterface | None = None
+
+    def __post_init__(self) -> None:
+        if self.interface is None:
+            self.interface = ResolvedInterface(
+                binding="JSONRPC",
+                protocol_version="0.3",
+                url=self.url,
+            )
 
 
 class AgentRegistry:
@@ -142,6 +151,13 @@ class AgentRegistry:
         if card is None:
             return None
 
+        try:
+            interface = a2a_compat.select_interface(card)
+        except ValueError:
+            logger.debug("Agent card at %s has no usable JSON-RPC interface", url)
+            return None
+        fallback = a2a_compat.select_fallback_interface(card, interface)
+
         agent_name = name or card.get("name", f"Agent@{url}")
         existing = next(
             (a for a in self._agents.values() if a.url == url), None
@@ -150,6 +166,8 @@ class AgentRegistry:
             existing.agent_card = card
             existing.healthy = True
             existing.name = agent_name
+            existing.interface = interface
+            existing.fallback_interface = fallback
             return existing
 
         local_id = hashlib.sha256(url.encode()).hexdigest()[:12]
@@ -161,9 +179,14 @@ class AgentRegistry:
             capabilities=_extract_capabilities(card),
             agent_card=card,
             healthy=True,
+            interface=interface,
+            fallback_interface=fallback,
         )
         self._agents[local_id] = agent
-        logger.info("Discovered agent: %s at %s (id=%s)", agent_name, url, local_id)
+        logger.info(
+            "Discovered agent: %s at %s (id=%s, protocol=%s)",
+            agent_name, url, local_id, interface.protocol_version,
+        )
         return agent
 
     # ──── Health check ────
@@ -206,7 +229,7 @@ class AgentRegistry:
     async def _fetch_agent_card(self, url: str, source: str = "config") -> dict | None:
         """Try each well-known agent card path and return the first valid card.
 
-        Validates the response with AgentCard.model_validate() to reject
+        Validates the response with a2a_compat.validate_agent_card() to reject
         non-agent HTTP 200 responses (e.g. error JSON from unrelated servers).
         """
         client = await self._get_client()
@@ -215,8 +238,8 @@ class AgentRegistry:
                 resp = await client.get(f"{url}{path}")
                 if resp.status_code == 200:
                     card_data = resp.json()
-                    AgentCard.model_validate(card_data)
-                    return card_data
+                    if a2a_compat.validate_agent_card(card_data) is not None:
+                        return card_data
             except Exception:
                 continue
         if source == "config":
