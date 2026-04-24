@@ -16,7 +16,7 @@ Setup (run once):
 
 Usage:
     cd hybro-hub
-    .venv/bin/python tests/e2e_live_test.py
+    .venv/bin/python tests/manual_e2e_live.py
 """
 
 import asyncio

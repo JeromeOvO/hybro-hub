@@ -150,6 +150,18 @@ def _add_file_logging(verbose: bool) -> None:
     logging.getLogger().addHandler(handler)
 
 
+def _resolve_working_dir_or_exit(working_dir: str | None) -> str:
+    """Default and validate the working directory for local coding adapters."""
+    resolved = working_dir or os.getcwd()
+    if not os.path.isdir(resolved):
+        click.echo(
+            f"Error: Working directory does not exist: {resolved}",
+            err=True,
+        )
+        sys.exit(1)
+    return resolved
+
+
 def _spinning_wait(
     message: str,
     check_fn: Callable[[], bool],
@@ -1070,6 +1082,10 @@ def agent_start(
             config["enabled_toolsets"] = ts if ts else ["hermes-cli"]
         adapter_type_display = config["adapter"]
         effective_port = config.get("port", port)
+        if adapter_type_display in ("claude-code", "codex"):
+            config["working_dir"] = _resolve_working_dir_or_exit(
+                config.get("working_dir")
+            )
     else:
         # adapter_type is guaranteed non-None here
         config = {"adapter": adapter_type}
@@ -1109,13 +1125,7 @@ def agent_start(
                 config["timeout"] = timeout
 
         elif adapter_type == "claude-code":
-            config["working_dir"] = working_dir or os.getcwd()
-            if not os.path.isdir(config["working_dir"]):
-                click.echo(
-                    f"Error: Working directory does not exist: {config['working_dir']}",
-                    err=True,
-                )
-                sys.exit(1)
+            config["working_dir"] = _resolve_working_dir_or_exit(working_dir)
             config["name"] = agent_name or "Claude Code Agent"
             config["description"] = "Claude Code AI coding agent"
             if claude_path:
@@ -1124,13 +1134,7 @@ def agent_start(
                 config["timeout"] = timeout
 
         elif adapter_type == "codex":
-            config["working_dir"] = working_dir or os.getcwd()
-            if not os.path.isdir(config["working_dir"]):
-                click.echo(
-                    f"Error: Working directory does not exist: {config['working_dir']}",
-                    err=True,
-                )
-                sys.exit(1)
+            config["working_dir"] = _resolve_working_dir_or_exit(working_dir)
             config["name"] = agent_name or "Codex Agent"
             config["description"] = "OpenAI Codex CLI coding agent"
             if codex_path:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import os
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import MagicMock, patch
@@ -689,6 +690,66 @@ class TestWorkingDirValidation:
                 str(tmp_path / "nonexistent"),
             ],
         )
+        assert result.exit_code != 0
+        assert "Working directory does not exist" in result.output
+        mock_a2a_adapter["load_adapter"].assert_not_called()
+
+
+class TestConfigWorkingDirHandling:
+    def test_claude_code_config_defaults_working_dir(self, tmp_path, mock_a2a_adapter):
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            config_path = Path("claude-agent.yaml")
+            config_path.write_text("adapter: claude-code\n", encoding="utf-8")
+            cwd = os.getcwd()
+
+            result = runner.invoke(main, ["agent", "start", "--config", str(config_path)])
+
+        assert result.exit_code == 0, result.output
+        config = mock_a2a_adapter["load_adapter"].call_args[0][0]
+        assert config["working_dir"] == cwd
+        assert "Working dir:" in result.output
+
+    def test_codex_config_defaults_working_dir(self, tmp_path, mock_a2a_adapter):
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            config_path = Path("codex-agent.yaml")
+            config_path.write_text("adapter: codex\n", encoding="utf-8")
+            cwd = os.getcwd()
+
+            result = runner.invoke(main, ["agent", "start", "--config", str(config_path)])
+
+        assert result.exit_code == 0, result.output
+        config = mock_a2a_adapter["load_adapter"].call_args[0][0]
+        assert config["working_dir"] == cwd
+        assert "Working dir:" in result.output
+
+    def test_claude_code_config_rejects_bad_working_dir(
+        self, tmp_path, mock_a2a_adapter,
+    ):
+        runner = CliRunner()
+        config_path = tmp_path / "claude-agent.yaml"
+        config_path.write_text(
+            f"adapter: claude-code\nworking_dir: {tmp_path / 'missing'}\n",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(main, ["agent", "start", "--config", str(config_path)])
+
+        assert result.exit_code != 0
+        assert "Working directory does not exist" in result.output
+        mock_a2a_adapter["load_adapter"].assert_not_called()
+
+    def test_codex_config_rejects_bad_working_dir(self, tmp_path, mock_a2a_adapter):
+        runner = CliRunner()
+        config_path = tmp_path / "codex-agent.yaml"
+        config_path.write_text(
+            f"adapter: codex\nworking_dir: {tmp_path / 'missing'}\n",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(main, ["agent", "start", "--config", str(config_path)])
+
         assert result.exit_code != 0
         assert "Working directory does not exist" in result.output
         mock_a2a_adapter["load_adapter"].assert_not_called()
