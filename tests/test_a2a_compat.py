@@ -527,10 +527,20 @@ class TestNormalizeInboundParts:
         parts = [{"kind": "file", "file": {}}]
         assert normalize_inbound_parts(parts, "0.3") == []
 
+    def test_v03_file_with_only_mimetype_dropped(self):
+        """File part with only mimeType but no uri/bytes has no actual content."""
+        parts = [{"kind": "file", "file": {"mimeType": "image/png"}}]
+        assert normalize_inbound_parts(parts, "0.3") == []
+
     def test_v03_text_without_text_key_dropped(self):
         """TextPart from protobuf where text='' was omitted by MessageToDict."""
         parts = [{"kind": "text"}]
         assert normalize_inbound_parts(parts, "0.3") == []
+
+    def test_v03_text_with_none_value_coerced_to_empty(self):
+        """Explicit text=None is kept and coerced to empty string."""
+        parts = [{"kind": "text", "text": None}]
+        assert normalize_inbound_parts(parts, "0.3") == [{"text": ""}]
 
     def test_v03_data_without_data_key_dropped(self):
         parts = [{"kind": "data"}]

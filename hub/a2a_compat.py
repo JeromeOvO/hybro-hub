@@ -13,6 +13,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_CONTENT_KEYS = frozenset(("text", "url", "raw", "data"))
+
 
 @dataclass(frozen=True)
 class ResolvedInterface:
@@ -299,10 +301,10 @@ def normalize_inbound_parts(parts: list[dict], version: str) -> list[dict]:
     for p in parts:
         kind = p.get("kind", "")
         if kind == "text":
-            text_val = p.get("text")
-            if text_val is None and "text" not in p:
+            if "text" not in p:
                 logger.warning("Dropping text part with missing 'text' key: %r", p)
                 continue
+            text_val = p.get("text")
             out: dict[str, Any] = {"text": text_val if text_val is not None else ""}
             if "metadata" in p:
                 out["metadata"] = p["metadata"]
@@ -318,7 +320,7 @@ def normalize_inbound_parts(parts: list[dict], version: str) -> list[dict]:
                 out["mediaType"] = f["mimeType"]
             if "name" in f:
                 out["filename"] = f["name"]
-            if not out:
+            if "url" not in out and "raw" not in out:
                 logger.warning("Dropping file part with empty file content: %r", p)
                 continue
             result.append(out)
@@ -338,7 +340,7 @@ def normalize_inbound_parts(parts: list[dict], version: str) -> list[dict]:
                 del out["kind"]
             if "mimeType" in out:
                 out["mediaType"] = out.pop("mimeType")
-            if not any(k in out for k in ("text", "url", "raw", "data")):
+            if not (_CONTENT_KEYS & out.keys()):
                 logger.warning("Dropping empty/contentless inbound part: %r", p)
                 continue
             result.append(out)
