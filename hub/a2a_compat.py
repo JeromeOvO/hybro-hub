@@ -7,8 +7,13 @@ and agent_registry.py only call into this module for protocol decisions.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+_CONTENT_KEYS = frozenset(("text", "url", "raw", "data"))
 
 
 @dataclass(frozen=True)
@@ -296,7 +301,11 @@ def normalize_inbound_parts(parts: list[dict], version: str) -> list[dict]:
     for p in parts:
         kind = p.get("kind", "")
         if kind == "text":
-            out: dict[str, Any] = {"text": p["text"]}
+            if "text" not in p:
+                logger.warning("Dropping text part with missing 'text' key: %r", p)
+                continue
+            text_val = p.get("text")
+            out: dict[str, Any] = {"text": text_val if text_val is not None else ""}
             if "metadata" in p:
                 out["metadata"] = p["metadata"]
             result.append(out)
@@ -311,8 +320,14 @@ def normalize_inbound_parts(parts: list[dict], version: str) -> list[dict]:
                 out["mediaType"] = f["mimeType"]
             if "name" in f:
                 out["filename"] = f["name"]
+            if "url" not in out and "raw" not in out:
+                logger.warning("Dropping file part with empty file content: %r", p)
+                continue
             result.append(out)
         elif kind == "data":
+            if "data" not in p:
+                logger.warning("Dropping data part with missing 'data' key: %r", p)
+                continue
             out = {"data": p["data"]}
             if "metadata" in p:
                 out["metadata"] = p["metadata"]
@@ -325,6 +340,9 @@ def normalize_inbound_parts(parts: list[dict], version: str) -> list[dict]:
                 del out["kind"]
             if "mimeType" in out:
                 out["mediaType"] = out.pop("mimeType")
+            if not (_CONTENT_KEYS & out.keys()):
+                logger.warning("Dropping empty/contentless inbound part: %r", p)
+                continue
             result.append(out)
     return result
 

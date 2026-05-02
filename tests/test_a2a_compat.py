@@ -513,9 +513,43 @@ class TestNormalizeInboundParts:
         parts = [{"text": "already flat"}]
         assert normalize_inbound_parts(parts, "0.3") == [{"text": "already flat"}]
 
-    def test_v03_unknown_part_passes_through(self):
+    def test_v03_unknown_part_without_content_dropped(self):
+        """Parts with no recognized content key are dropped (strict A2A compliance)."""
         parts = [{"custom": "field"}]
-        assert normalize_inbound_parts(parts, "0.3") == [{"custom": "field"}]
+        assert normalize_inbound_parts(parts, "0.3") == []
+
+    def test_v03_empty_dict_part_dropped(self):
+        """Bare {} parts (from protobuf Part(text='') serialization) are dropped."""
+        parts = [{}]
+        assert normalize_inbound_parts(parts, "0.3") == []
+
+    def test_v03_file_with_empty_file_content_dropped(self):
+        parts = [{"kind": "file", "file": {}}]
+        assert normalize_inbound_parts(parts, "0.3") == []
+
+    def test_v03_file_with_only_mimetype_dropped(self):
+        """File part with only mimeType but no uri/bytes has no actual content."""
+        parts = [{"kind": "file", "file": {"mimeType": "image/png"}}]
+        assert normalize_inbound_parts(parts, "0.3") == []
+
+    def test_v03_text_without_text_key_dropped(self):
+        """TextPart from protobuf where text='' was omitted by MessageToDict."""
+        parts = [{"kind": "text"}]
+        assert normalize_inbound_parts(parts, "0.3") == []
+
+    def test_v03_text_with_none_value_coerced_to_empty(self):
+        """Explicit text=None is kept and coerced to empty string."""
+        parts = [{"kind": "text", "text": None}]
+        assert normalize_inbound_parts(parts, "0.3") == [{"text": ""}]
+
+    def test_v03_data_without_data_key_dropped(self):
+        parts = [{"kind": "data"}]
+        assert normalize_inbound_parts(parts, "0.3") == []
+
+    def test_v03_metadata_only_part_dropped(self):
+        """A Part with only metadata and no content variant is dropped."""
+        parts = [{"metadata": {"source": "db"}}]
+        assert normalize_inbound_parts(parts, "0.3") == []
 
     def test_v10_passes_through(self):
         parts = [{"text": "hello"}, {"url": "https://example.com/f.pdf"}]
